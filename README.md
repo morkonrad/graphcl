@@ -58,14 +58,14 @@ GraphpCL is still work in progress. Nevertheless, the whole-concept was already 
 
 **Tested systems:**
 
-| HW-Vendor   | CPU       | GPU         | OS                      | Driver version    |
-| ----------- | --------- | ----------- | ----------------------- | -------------------- |
-| Intel+Nvidia CPU+GPU| i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 456.71  win_x64 |
-| Intel+AMD  2-CPU+2-GPU | Xeon-6134G| R9-290      | Win10-21H1              | INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64 |
-|             |           | WX-7100     |                         |                   |
+| HW-Vendor             | CPU       | GPU         | OS                      | Driver version    |
+| -----------           | --------- | ----------- | ----------------------- | -------------------- |
+| Intel+Nvidia CPU+GPU  | i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 471.11  win_x64, INT-CPU 18.1.0.0920 + NV-GPU 471.11  unix_x64  |
+| Intel+AMD 2-CPU+2-GPU | Xeon-6134G| R9-290      | Win10-21H1              | INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64 |
+|                       |           | WX-7100     |                         |                   |
 | Intel+Nvidia CPU+3-GPU| i9-7980XE | GTX-1080Ti  | Win10-21H1 / Ubuntu20.04| INT-CPU 18.1.0.0920 + NV-GPU 456.71 win_x64  |
-|             |           | GTX-1080    |                         |                   |
-|             |           | GTX-TitanX  |                         |                   |
+|                       |           | GTX-1080    |                         |                   |
+|                       |           | GTX-TitanX  |                         |                   |
 
 References
 ------------
