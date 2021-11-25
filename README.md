@@ -2,27 +2,32 @@
 
 What is this ? 
 --------------
-It's framework for execution of OpenCL-kernel graphs on multiple-devices such as mix. of CPUs and GPUs. In short, the whole concept is to provide the kernel-graph by the user without tedious distribution and mapping to the execution platform. The mapping and scheduling of graph-nodes its delegated to the GraphCL-runtime. Runtime distributes and mapps tasks automatically. It enables also parallel and asynchronous tasks execution, regardles of the number, type and power of processors.
 
-**Features:**
+It's framework for execution of OpenCL-kernel graphs on multiple-devices. 
+
+In short, the main concept of GraphCL is the automatic distribution and mapping of any kernel-graph, no fixed-direct code that maps kernels to devices. Designer uses GraphCL-API to define only the kernel-graph without tedious and complex mapping to the execution platform. The mapping and scheduling of graph-nodes is delegated to the GraphCL-runtime. Runtime distributes and mapps tasks automatically, regardles of the number, type and power of processors. 
+
+**Main features:**
 
 1. OpenCL-C kernel graph-API that enables to code data-flow graphs of OpenCL-kernels. 
-2. Runtime that implements a) the graph schedule calculation b) based on calculated schedule executes the task/kernels. 
-3. Runtime supports parallel+asynchronous tasks/kernels execution on: multiple-CPU and/or multiple-GPU  
-4. Runtime-driver enables variable workload (Ndrange) splitting and execution
+2. Runtime that implements a) the graph schedule calculation b) based on the calculated schedule, runtime executes in parallel and/or asynchronous the graph-kernels.
+3. Runtime supports parallel+asynchronous tasks/kernels execution, data transfers and synchronization on: multiple-CPU and/or multiple-GPU  
+4. Runtime-driver enables variable partial-workload(Ndrange) execution via splitting and gathering. 
 5. Support for Intel/AMD CPUs and Intel/AMD/Nvidia GPUs
 
 What for ? 
 --------------
+
+GraphCL is designed for any application that consist of many OpenCL-C kernels. Examples are multi-kernel apps., such as linear-algebra graphs (any DNN-model), multi-kernel machine-vision algorithms ...    
 
 
 Structure  
 --------------
 Whole project consists of separate modules. A) schedule B) driver-runtime
   
-First folder includes implementation of graph schedule. The schedule-module uses the HEFT implementation (https://github.com/mackncheesiest/heft). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node weights. For graph-edge weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
+First folder includes implementation of graph-schedule. The schedule-module uses the HEFT implementation (https://github.com/mackncheesiest/heft). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node-weights. For the graph-edge weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
 
-Second folder includes implementation of GraphCL API+driver-runtime. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<-->GPU and GPU<--->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently its a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unti-tests, some benchmark and profiling code. 
+Second folder includes implementation of GraphCL API+driver-runtime. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between any CPU<-->GPU and GPU<--->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently it is a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unti-tests, some benchmark and profiling code. 
 
 Requierments ?
 ---------------
