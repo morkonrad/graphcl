@@ -2,27 +2,22 @@
 
 What is this ? 
 --------------
-It's header only library that supports collaborative CPU-GPU workload processing. 
-It enables parallel and asynchronous tasks execution described by the task graph.
+It's framework for execution of OpenCL-kernel graphs on multiple-devices such as mix. of CPUs and GPUs. In short, the whole concept is to provide the kernel-graph by the user without tedious distribution and mapping to the execution platform. The mapping and scheduling of graph-nodes its delegated to the GraphCL-runtime. Runtime distributes and mapps tasks automatically. It enables also parallel and asynchronous tasks execution, regardles of the number, type and power of processors.
 
 **Features:**
 
-1. Task graph API and runtime that implements a) the graph schedule calculation b) based on calculated schedule executes the task/kernels. 
+1. OpenCL-C kernel graph API and runtime that implements a) the graph schedule calculation b) based on calculated schedule executes the task/kernels. 
 2. It supports parallel+asynchronous tasks/kernels execution on: multiple-CPU and/or multiple-GPU  
 4. Runtime-driver enables Variable workload (Ndrange) splitting and execution
 5. Support for Intel,AMD CPUs and AMD/Nvidia GPUs
 
 Structure  
 --------------
-Whole project consists of separate modules. 
-Graphcl:
-  A) schedule
-  B) driver-runtime
+Whole project consists of separate modules. A) schedule B) driver-runtime
   
 First folder schedule includes implementation of graph schedule calculation. The schedule-module uses the HEFT implementation ( ref. guthub ...). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node weights. For graph-edge weights the schedule-module uses profiled bandwidth for interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
 
-Second folder driver-runtime includes implementation of GraphCL. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<->GPU GPU<->GPU. The whole driver uses OpenCL-API and runtime from different Hardware-Vendors. Currently its OpenCL Platform from Intel for AMD-Intel CPUs and OpenCL Platform for AMD or NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks.  
-   
+Second folder driver-runtime includes implementation of GraphCL. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<->GPU GPU<->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently its a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unti-tests, some benchmark and profiling code. 
 
 Requierments ?
 ---------------
@@ -30,35 +25,26 @@ Requierments ?
 2. CMake 3.x
 3. OpenCL 1.x headers and lib. with OpenCL-runtime.
 4. For unit-tests CTest
-5. Pyton with several standard packages such as matplotlib, pandas, numpy ...
+5. Python 3.x with several standard packages such as matplotlib, pandas, numpy ...
 
 How to build ?
 ---------------
-  1. git clone CoopCL /dst
+(example for some Windows platform toolchain)
+  1. git clone GraphCL /dst
   2. cd /dst
   3. mkdir build
   4. cd build
-  5. cmake -G"Visual Studio 14 2015 Win64" .. 
+  5. cmake -G"Visual Studio 15 2017 Win64" .. 
   6. cmake --build . --config Release
   
-For Windows, Visual Studio 2015 is a minimal tested version. For Linux it's tested with GCC 7.0 and Clang 5.0. In general, compiler must support C++17. 
-
-After succesfull build you can call unit tests to check if they pass:  
- 1. cd /clDriver
- 2. ctest 
-  
-How to use it ?
-----------------
-After successful build and tests, the CoopCL should be ready to go. 
-
-It's header only library so you need to only link whith your app.
-
-Check sample usage/application below.
+For Windows, Visual Studio 2017 is a minimal tested version. For Linux it's tested with GCC 8.0 and Clang 9.0. 
+In general, it needs a compiler that supports C++17. 
 
 
 Current state
 ----------------
-GraphpCL is still work in progress. But, it the driver can already successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
+
+GraphpCL is still work in progress. But, the whole-concept was already experimentally tested and works. The driver can successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
 
 **Tested systems:**
 
