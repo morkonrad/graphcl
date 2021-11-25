@@ -6,18 +6,23 @@ It's framework for execution of OpenCL-kernel graphs on multiple-devices such as
 
 **Features:**
 
-1. OpenCL-C kernel graph API and runtime that implements a) the graph schedule calculation b) based on calculated schedule executes the task/kernels. 
-2. It supports parallel+asynchronous tasks/kernels execution on: multiple-CPU and/or multiple-GPU  
-4. Runtime-driver enables Variable workload (Ndrange) splitting and execution
-5. Support for Intel,AMD CPUs and AMD/Nvidia GPUs
+1. OpenCL-C kernel graph-API that enables to code data-flow graphs of OpenCL-kernels. 
+2. Runtime that implements a) the graph schedule calculation b) based on calculated schedule executes the task/kernels. 
+3. Runtime supports parallel+asynchronous tasks/kernels execution on: multiple-CPU and/or multiple-GPU  
+4. Runtime-driver enables variable workload (Ndrange) splitting and execution
+5. Support for Intel/AMD CPUs and Intel/AMD/Nvidia GPUs
+
+What for ? 
+--------------
+
 
 Structure  
 --------------
 Whole project consists of separate modules. A) schedule B) driver-runtime
   
-First folder schedule includes implementation of graph schedule calculation. The schedule-module uses the HEFT implementation ( ref. guthub ...). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node weights. For graph-edge weights the schedule-module uses profiled bandwidth for interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
+First folder includes implementation of graph schedule. The schedule-module uses the HEFT implementation ( ref. guthub ...). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node weights. For graph-edge weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
 
-Second folder driver-runtime includes implementation of GraphCL. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<->GPU GPU<->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently its a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unti-tests, some benchmark and profiling code. 
+Second folder includes implementation of GraphCL API+driver-runtime. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<-->GPU and GPU<--->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently its a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unti-tests, some benchmark and profiling code. 
 
 Requierments ?
 ---------------
