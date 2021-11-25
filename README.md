@@ -54,18 +54,18 @@ In general, it needs a compiler that supports C++17.
 Current state
 ----------------
 
-GraphpCL is still work in progress. But, the whole-concept was already experimentally tested and works. The driver can successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
+GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
 
 **Tested systems:**
 
-| HW-Vendor   | CPU       | GPU         | GPU-Driver     | OS    | Platform          |
-| ----------- | --------- | ----------- | -------------- | ----- | ----------------- |
-| Intel+Nvidia| I7-660U   | GTX-780Ti   | 26.20.100.7158 | win64 | Desktop CPU+GPU   |
-| Intel+AMD   | I7-3930k  | R9-290      | 2906.10        | win64 | Desktop 2CPU+2GPU |
-|             |           | WX-7100     | 2906.10        | win64 |  |
-| Intel+Nvidia| I7-3930k  | GTX-1080Ti  | 2906.10        | win64 | Desktop CPU+3GPU  |
-|             |           | GTX-1080    | 2906.10        | win64 |   |
-|             |           | GTX-TitanX  | 2906.10        | win64 |   |
+| HW-Vendor   | CPU       | GPU         | OS                      | Driver version    |
+| ----------- | --------- | ----------- | ----------------------- | -------------------- |
+| Intel+Nvidia| i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 456.71  win_x64 |
+| Intel+AMD   | Xeon-6134G| R9-290      | Win10-21H1              | INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64 |
+|             |           | WX-7100     |                         |                   |
+| Intel+Nvidia| i9-7980XE | GTX-1080Ti  | Win10-21H1 / Ubuntu20.04| INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64  |
+|             |           | GTX-1080    |                         |                   |
+|             |           | GTX-TitanX  |                         |                   |
 
 References
 ------------
