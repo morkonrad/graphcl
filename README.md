@@ -56,7 +56,7 @@ Check sample usage/application below.
 
 Current state
 ----------------
-GraphpCL is still in an early stage of development. It can successfully execute many tasks with a variable offload ratio on Intel, NVIDIA and AMD platforms. 
+GraphpCL is still work in progress. But, it the driver can already successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
 
 **Tested systems:**
 
