@@ -21,14 +21,16 @@ Graphcl:
   
 First folder schedule includes implementation of graph schedule calculation. The schedule-module uses the HEFT implementation ( ref. guthub ...). In short it recieves as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node weights. For graph-edge weights the schedule-module uses profiled bandwidth for interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and genereates graphCL-commands.  
 
-Second folder driver-runtime includes implementation of GraphCL. The includes high-level commands mimic. driver uses OpenCL-API  
+Second folder driver-runtime includes implementation of GraphCL. GraphCL-API includes high-level commands that enable two asnychronous types of operations. First operation basicly enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between CPU<->GPU GPU<->GPU. The whole driver uses OpenCL-API and runtime from different Hardware-Vendors. Currently its OpenCL Platform from Intel for AMD-Intel CPUs and OpenCL Platform for AMD or NVidia GPUs. Finally, parallel-conccuerent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks.  
+   
 
 Requierments ?
 ---------------
 1. C++17 compiler
 2. CMake 3.x
-3. OpenCL 1.2 headers and lib, support for CPU and GPU
+3. OpenCL 1.x headers and lib. with OpenCL-runtime.
 4. For unit-tests CTest
+5. Pyton with several standard packages such as matplotlib, pandas, numpy ...
 
 How to build ?
 ---------------
