@@ -63,10 +63,8 @@ GraphpCL is still in an early stage of development. It can successfully execute 
 | HW-Vendor   | CPU       | GPU         | GPU-Driver     | OS    | Platform          |
 | ----------- | --------- | ----------- | -------------- | ----- | ----------------- |
 | Intel+Nvidia| I7-660U   | GTX-780Ti   | 26.20.100.7158 | win64 | Desktop CPU+GPU   |
-----------------------------------------------------------------------------------
 | Intel+AMD   | I7-3930k  | R9-290      | 2906.10        | win64 | Desktop 2CPU+2GPU |
 |             |           | WX-7100     | 2906.10        | win64 | Desktop 2CPU+2GPU |
-----------------------------------------------------------------------------------
 | Intel+Nvidia| I7-3930k  | GTX-1080Ti  | 2906.10        | win64 | Desktop CPU+3GPU  |
 |             |           | GTX-1080    | 2906.10        | win64 | Desktop CPU+3GPU  |
 |             |           | GTX-TitanX  | 2906.10        | win64 | Desktop CPU+3GPU  |
