@@ -5,7 +5,7 @@ What is this ?
 
 It's framework for execution of OpenCL-kernel graphs on multiple-devices. 
 
-In short, the main concept of GraphCL is the automatic distribution and mapping of any kernel-graph, no fixed-direct code that maps kernels to devices. Designer uses GraphCL-API to define only the kernel-graph without tedious and complex mapping to the execution platform. The mapping and scheduling of graph-nodes is delegated to the GraphCL-runtime. Runtime distributes and maps tasks automatically, regardless of the number, type and power of processors. 
+In short, the main concept of GraphCL is to enable automatic distribution and mapping of any kernel-graph, no fixed-direct code that maps kernels to devices. Designer uses GraphCL-API to define only the kernel-graph without tedious and complex mapping to the execution platform. The mapping and scheduling of graph-nodes is delegated to the GraphCL-runtime. Runtime distributes and maps tasks automatically, regardless of the number, type and power of processors. 
 
 **Main features:**
 
@@ -27,7 +27,7 @@ Whole project consists of separate modules. A) schedule B) driver-runtime
   
 First folder includes implementation of graph-schedule. The schedule-module uses the HEFT implementation (https://github.com/mackncheesiest/heft). In short it receives as input some OpenCL kernel-graph. In the graph each node represents a kernel function. For each kernel-function there are profiled execution times to build node-weights. For the graph-edge weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and generates graphCL-commands.  
 
-Second folder includes implementation of GraphCL API+driver-runtime. GraphCL-API includes high-level commands that enable two asynchronous types of operations. First operation basically enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between any CPU<-->GPU and GPU<--->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently it is a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-concurrent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unit-tests, some benchmark and profiling code. For more details check Readme inside folders. 
+Second folder includes implementation of GraphCL API and driver-runtime. GraphCL-API includes high-level commands that enable two asynchronous types of operations. First operation basically enqueues some OpenCL-C kernel on CPU or GPU. Second operation enables asynchronous (non-blocking call) transfers between any CPU<-->GPU and GPU<--->GPU. The whole driver uses OpenCL-runtimes from different Hardware-Vendors. Currently it is a Intel-OpenCL-Platform that supports AMD/Intel CPUs, and AMD/NVIDIA-OpenCL-Platform for AMD/NVidia GPUs. Finally, parallel-concurrent execution of kernels on different processors and data-transfers are synchronized and managed by the GraphCL-runtime. The cross-platform synchronization is implemented with OpenCL-queueus, OpenCl-events and asynchronous user-event callbacks. Additionally, the driver includes several utility functions/apps. such as: unit-tests, some benchmark and profiling code. For more details check Readme inside folders. 
 
 Requirements ?
 ---------------
@@ -47,23 +47,23 @@ How to build ?
   5. cmake -G"Visual Studio 15 2017 Win64" .. 
   6. cmake --build . --config Release
   
-For Windows, Visual Studio 2017 is a minimal tested version. For Linux it's tested with GCC 8.0 and Clang 9.0. 
+For Windows, Visual Studio 2017 is a minimal tested version. For Linux it's tested with GCC 9.3 and Clang 9.0. 
 In general, it needs a compiler that supports C++17. 
 
 
 Current state
 ----------------
 
-GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different task(kernel)-graphs on Intel, NVIDIA and AMD platforms. 
+GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different kernel-graphs on Intel, NVIDIA and AMD platforms. 
 
 **Tested systems:**
 
 | HW-Vendor             | CPU       | GPU         | OS                      | Driver version    |
 | -----------           | --------- | ----------- | ----------------------- | -------------------- |
-| Intel+Nvidia CPU+GPU  | i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 471.11  win_x64, INT-CPU 18.1.0.0920 + NV-GPU 471.11  unix_x64  |
+| Intel+Nvidia CPU+GPU  | i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 471.11  win_x64, INT-CPU 18.1.0.0920 + NV-GPU 470.57.02 unix_x64  |
 | Intel+AMD 2-CPU+2-GPU | Xeon-6134G| R9-290      | Win10-21H1              | INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64 |
 |                       |           | WX-7100     |                         |                   |
-| Intel+Nvidia CPU+3-GPU| i9-7980XE | GTX-1080Ti  | Win10-21H1 / Ubuntu20.04| INT-CPU 18.1.0.0920 + NV-GPU 456.71 win_x64  |
+| Intel+Nvidia CPU+3-GPU| i9-7980XE | GTX-1080Ti  | Win10-21H1 / Ubuntu20.04| INT-CPU 18.1.0.0920 + NV-GPU 456.71 win_x64, INT-CPU 18.1.0.0920 + NV-GPU 470.57.02 unix_x64   |
 |                       |           | GTX-1080    |                         |                   |
 |                       |           | GTX-TitanX  |                         |                   |
 
