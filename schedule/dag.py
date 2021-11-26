@@ -82,6 +82,7 @@ class Node:
     _name_node_executor: str = ''
     _id_node_executor: int = 0
     _latency_enqueue_node_executor: float = 10e-6
+    _workload_chunk_dispatched_to_execute: float = 100.0  # chunk of Ndrange dispatched for processing
 
     def set_device_info(self, processing_duration: float, processor: Device):
 
@@ -162,10 +163,9 @@ class Node:
         self._edge_weight_E = weight_ms
         return
 
-    def __init__(self, input_buffers: [Buffer], output_buffers: [Buffer],
-                 profiles: (bool, [(float, Device)]),
-                 dependent_nodes: [],
-                 name: str, node_id: int = 0, node_executor: (float, Device) = (0, None)):
+    def __init__(self, input_buffers: [Buffer], output_buffers: [Buffer], profiles: (bool, [(float, Device)]),
+                 dependent_nodes: [], name: str, node_id: int = 0, node_executor: (float, Device) = (0, None),
+                 workload_chunk_dispatched: float = 100):
         """
         :param input_buffers:
         :param output_buffers:
@@ -180,9 +180,10 @@ class Node:
         self._output_buffers = output_buffers
         self._is_contiguous_output = profiles[0]
         self._node_weights_V = profiles[1]
-        self._predecessor_nodes = dependent_nodes
 
+        self._predecessor_nodes = dependent_nodes
         self.set_node_executor(node_executor)
+        self._workload_chunk_dispatched_to_execute = workload_chunk_dispatched
 
         if len(input_buffers) == 0:
             self._is_entry = True
@@ -297,7 +298,7 @@ class Node:
 
 
 def build_node_matrix(dag: [], map_processors: {}) -> pd.DataFrame:
-    """Ex: Expected result
+    """Ex: Expected format
     TP, P_0, P_1, P_2
     T_0, 0, 0, 0
     T_1, 172, 43, 47
@@ -337,12 +338,16 @@ def build_node_matrix(dag: [], map_processors: {}) -> pd.DataFrame:
                 row[key] = v[0]
                 id_pro += 1
 
-        row_names.append("T_" + str(id_node))
+        name_in_format = node.name()  # format inside the program
+        name_sch_format = "T_" + str(id_node)  # format expected by the scheduler
+        # print(name_in_format + "-->" + name_sch_format)
+        row_names.append(name_sch_format)
         id_node += 1
         data.append(row)
 
     df = pd.DataFrame.from_records(data)
     df.index = row_names
+
     return df
 
 
@@ -384,7 +389,7 @@ def build_edge_matrix(dag: []) -> pd.DataFrame:
     :return:
 
     """
-    """Ex: Expected result
+    """Ex: Expected format
     T,T_0,T_1,T_2,T_3,T_4
     T_0,0,4,0.1,0,0
     T_1,0,0,0,0.1,0
@@ -415,7 +420,7 @@ def build_edge_matrix(dag: []) -> pd.DataFrame:
 
 def build_bandwidth_matrix(dag: []) -> pd.DataFrame:
     """
-    Ex: Expected result
+    Ex: Expected format
     P, P_0, P_1, P_2
     P_0, 0, 1, 1
     P_1, 1, 0, 1
@@ -481,6 +486,7 @@ def print_find_end_times(schedule: {int: [heft.ScheduleEvent]}, processors: [str
     span_time = max(end_times)
     return span_time
 
+
 def get_labels_dict(dag: []):
     labels_dict = {}
     node_id = 0
@@ -492,26 +498,20 @@ def get_labels_dict(dag: []):
 
 
 def calculate_offload_profile(single_device_profile: [(float, Device)], threshold: float,
-                              idle_slots: {int: [(float, float)]}, start_end_times: (float, float),
-                              executor_processor_id: int) -> [float]:
-    # find idle_processors during node processing
+                              start_end_times: (float, float)) -> [float]:
+    """
+    This function calculates speeds of processors to process this task and based on this
+    calculates the balanced partition of task for parallel multi-device execution
+    :param single_device_profile:
+    :param threshold:
+    :param start_end_times:
+    :return:
+    """
     node_start_time, node_end_time = start_end_times
     offload_processor_ids = []
     for duration, device in single_device_profile:
         offload_processor_ids.append(device.id())
 
-    '''
-    for processor_id in idle_slots:
-        for idle_slot_start_time, idle_slot_end_time in idle_slots[processor_id]:
-
-            idle_slot_duration = idle_slot_end_time - idle_slot_start_time
-            node_duration = node_end_time - node_start_time
-            if idle_slot_duration >= node_duration and idle_slot_start_time <= node_end_time:
-                offload_processor_ids.append(processor_id)
-                continue
-            # if idle_slot_start_time <= node_start_time and idle_slot_end_time >= node_end_time:
-            #    offload_processor_ids.append(processor_id)
-    '''
     # selected_processors = single_device_profile
     selected_processors = []
     map_profiles = {}
@@ -521,9 +521,6 @@ def calculate_offload_profile(single_device_profile: [(float, Device)], threshol
         map_profiles[id_prof] = prof
         id_prof += 1
 
-    # offload_processor_ids.append(executor_processor_id)
-
-    # offload_processor_ids = sorted(offload_processor_ids)
     for coprocessor_id in offload_processor_ids:
         selected_processors.append(map_profiles[coprocessor_id])
 
@@ -547,7 +544,9 @@ def calculate_offload_profile(single_device_profile: [(float, Device)], threshol
     offload_sub_kernels = []
     proc_id = 0
     for offload in offloads_ndr:
-        offload_sub_kernels.append([selected_processors[proc_id][0] * offload, selected_processors[proc_id][1]])
+        scaled_processing_duration = selected_processors[proc_id][0] * offload
+        device = selected_processors[proc_id][1]
+        offload_sub_kernels.append([scaled_processing_duration, device])
         proc_id += 1
 
     offload_sub_kernels_filter = []
@@ -558,6 +557,22 @@ def calculate_offload_profile(single_device_profile: [(float, Device)], threshol
             offload_sub_kernels_filter.append(offload)
             offloads_ndr_filter.append(offloads_ndr[proc_id])
         proc_id += 1
+
+    offload_sum = 0
+    fastest_device_id = 0
+    max_val = 0
+    did = 0
+    for offload in offloads_ndr_filter:
+        if offload > max_val:
+            max_val = offload
+            fastest_device_id = did
+        offload_sum += offload
+        did += 1
+
+    # if whole workload is not distributed ? than the fastest device gets rest
+    if offload_sum < 1.0:
+        rest = 1.0 - offload_sum
+        offloads_ndr_filter[fastest_device_id] += rest
 
     return offload_sub_kernels_filter, offloads_ndr_filter
 
@@ -671,34 +686,13 @@ def find_idle_slots(dag_nodes: [Node], schedule: {}, map_processors: {}) -> {int
     return idle_slots
 
 
-def udpate_task_mapping(dag_nodes: [Node], schedule: {}, map_processors: {}) -> [Node]:
-    if len(dag_nodes) == 0:
-        print("Warning: dag_nodes is empty, FIXME!")
-
-    if len(schedule) == 0:
-        print("Warning: schedule is empty, FIXME!")
-
-    if len(map_processors) == 0:
-        print("Warning: dict_processors is empty, FIXME!")
-
-    mapped_nodes_coarse = []
-    for processor in map_processors:
-        for schedule_event in schedule[processor]:
-            # unpack named tuple
-            node_id, start_time, end_time, processor_id = schedule_event
-            # print(node_id, start_time, end_time, processor_id)
-            for node in dag_nodes:
-                if node.node_id() == node_id:
-                    duration = end_time - start_time
-                    node.set_node_executor((duration, map_processors[processor_id]))
-                    mapped_nodes_coarse.append(node)
-                    continue
-
-    mapped_nodes_coarse = sorted(mapped_nodes_coarse, key=lambda node: node.node_id())
-    return mapped_nodes_coarse
-
-
 def calculate_dag_execution_times(dag: [Node], map_processors: {int, Device}) -> {int: float}:
+    """
+    Get communication and execution costs to properly estimate the node weights
+    :param dag:
+    :param map_processors:
+    :return:
+    """
     if len(dag) == 0:
         print('Warning, expected non emtpy list, fixme!')
 
