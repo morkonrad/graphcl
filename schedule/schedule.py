@@ -329,7 +329,7 @@ def store_schedule_in_file(store_graphcl_commands: bool, schedule: {},
                         duration_task = schedule_event.end - schedule_event.start
                         node.set_node_executor((duration_task, map_proc[dispatched_schedule_device_id]))
 
-    # analyze dataflow to decode data transfers into runtime-commands
+    # analyze data-flow to decode data transfers into runtime-commands
     for dispatched_schedule_device_id, dispatched_tasks in schedule.items():
         print("---------------------------------")
         print("Commands for " + map_proc[dispatched_schedule_device_id].name())
@@ -347,8 +347,6 @@ def store_schedule_in_file(store_graphcl_commands: bool, schedule: {},
             # read the task inside the dag via the task_id in schedule
             current_node = dag_nodes[schedule_event.task]
             for predecessor in current_node.predecessor_nodes():
-
-                # DBG only
                 node_id = current_node.executor_id()
                 if dispatched_schedule_device_id != node_id:
                     print("----", "Remap dag node after schedule: ", current_node.name(),
