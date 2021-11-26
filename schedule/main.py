@@ -11,12 +11,12 @@ def main():
     for app_name in app_names:
         names += app_name + ','
 
+    parser.set_defaults(partition=True)
     parser.add_argument('--mkmd_name', type=str, help='Select one application name: ' + 'ALL,' + names)
     parser.add_argument('--partition_sub_kernel_on', dest='partition', action='store_true')
     parser.add_argument('--partition_sub_kernel_off', dest='partition', action='store_false')
-    parser.set_defaults(partition=True)
-
     args = parser.parse_args()
+
     app_name = args.mkmd_name
     """
     flags to control app
