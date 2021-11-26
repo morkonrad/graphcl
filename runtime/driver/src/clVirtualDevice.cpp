@@ -451,9 +451,6 @@ void virtual_device::calculate_workload_distribution_statistics(
 	}
 }
 
-
-
-
 static auto count_devices = [](const cl_device_type query_type,const std::map<const cl::Context*, clDevice>& devices)->std::uint8_t
 {
 	std::uint8_t count = 0;

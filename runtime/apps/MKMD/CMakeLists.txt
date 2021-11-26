@@ -11,7 +11,6 @@ find_package(OpenCL REQUIRED)
 
 add_library(${PROJECT_NAME} mkmd.cpp skmd.cpp)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17)
-
 target_include_directories(${PROJECT_NAME} PUBLIC ../../driver/include)
 target_include_directories(${PROJECT_NAME} PUBLIC ${OpenCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PRIVATE graphcl_lib)
