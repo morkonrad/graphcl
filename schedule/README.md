@@ -4,7 +4,7 @@ TODO
 What for ? 
 --------------
 TODO
-Structure  
+Structure 
 --------------
 TODO
 How to use it ?
