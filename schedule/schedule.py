@@ -2,6 +2,8 @@ import copy
 import os
 from time import time as timer
 
+from clyent import color
+
 import dag
 import visualize
 import heft
@@ -299,6 +301,101 @@ def calculate_HEFT_schedule(dag_list: [], map_processors: {}, avoid: bool = Fals
     return schedule, dag_di_graph, cnt_nodes, schedule_duaration
 
 
+def check_schedule_reorder(schedule: {}, map_proc: {int, dag.Device}, dag_nodes: [dag.Node]) -> int:
+    # check if any nodes are reordered if yes set new mapping (device_executor id)
+    for dispatched_schedule_device_id, dispatched_tasks in schedule.items():
+        for schedule_event in dispatched_tasks:
+            for node in dag_nodes:
+                if node.node_id() == schedule_event.task:
+                    if node.executor_id() != dispatched_schedule_device_id:
+                        print("Detected re-mapped node ", node.name(), " after schedule")
+                        duration_task = schedule_event.end - schedule_event.start
+                        node.set_node_executor((duration_task, map_proc[dispatched_schedule_device_id]))
+    return 0
+
+
+def create_dispatch_commands(schedule: {}, map_proc: {int, dag.Device}, dag_nodes: [dag.Node]) -> int:
+    check_schedule_reorder(schedule, map_proc, dag_nodes)
+
+    print("-----------------------------------")
+    print("Dispatch order of GraphCL-commands ")
+    print("-----------------------------------\n")
+    cmd_id = 0
+    for current_node in dag_nodes:
+        for predecessor in current_node.predecessor_nodes():
+            if predecessor.name() != "":
+                for out_buffer in predecessor.output_buffers():
+                    for in_buffer in current_node.input_buffers():
+                        if in_buffer.name() == out_buffer.name():  # check if buffers are "connected"
+                            cmd_txt = "Copy from: " + map_proc[predecessor.executor_id()].name() + " to: " + \
+                                      map_proc[current_node.executor_id()].name() + \
+                                      " buffer: " + out_buffer.name() + " wait for " + predecessor.name()
+                            print(cmd_txt)
+                            cmd_id += 1
+
+        if len(current_node.predecessor_nodes()) == 0:
+            cmd_txt = "Execute " + current_node.name() + " on " + \
+                      map_proc[current_node.executor_id()].name() + " no wait for "
+            print(cmd_txt)
+            cmd_id += 1
+        else:
+            for predecessor in current_node.predecessor_nodes():
+                if predecessor.name() != "":
+                    cmd_txt = "Execute " + current_node.name() + " on " + \
+                              map_proc[current_node.executor_id()].name() + " wait for " + predecessor.name()
+                    print(cmd_txt)
+                    cmd_id += 1
+
+    print("------------------\n")
+    print("Dispatched commands:\t", cmd_id)
+    return 0
+
+
+def decode_data_flow(schedule: {}, map_proc: {int, dag.Device}, dag_nodes: [dag.Node]) -> int:
+    check_schedule_reorder(schedule, map_proc, dag_nodes)
+
+    # analyze dataflow to decode data transfers into runtime-commands
+    print("Dispatch order: \n")
+    for dispatched_schedule_device_id, dispatched_tasks in schedule.items():
+        print("---------------------------------")
+        print("Commands for " + map_proc[dispatched_schedule_device_id].name())
+        print("---------------------------------")
+        for schedule_event in dispatched_tasks:
+            # scan events dispatched to the device
+            # for each event scan predecessors to know data-flow
+            # if no predecessor -> nop
+            # if predecessor exist, check who is the executor
+            # finally generate graphCL-API commands:
+            #   1)copy(from,to,what_buffer)
+            #   2)Execute which kernel what device
+            # ------------------------------------------------------------
+
+            # read the task inside the dag via the task_id in schedule
+            current_node = dag_nodes[schedule_event.task]
+
+            for predecessor in current_node.predecessor_nodes():
+                # DBG only
+                """node_id = current_node.executor_id()
+                if dispatched_schedule_device_id != node_id:
+                    print("----", "Remap dag node after schedule: ", current_node.name(),
+                          map_proc[dispatched_schedule_device_id].name(), "<--->",
+                          map_proc[node_id].name(), "----")
+                """
+                if predecessor.name() != "":
+                    for out_buffer in predecessor.output_buffers():
+                        for in_buffer in current_node.input_buffers():
+                            if in_buffer.name() == out_buffer.name():  # check if buffers are "connected"
+                                cmd_txt = "Copy from: " + map_proc[predecessor.executor_id()].name() + " to: " + \
+                                          map_proc[dispatched_schedule_device_id].name() + \
+                                          " buffer: " + out_buffer.name()
+                                print(cmd_txt)
+                                print("Connection between " + current_node.name() + " and " + predecessor.name())
+
+            cmd_txt = "Execute " + current_node.name() + " on " + map_proc[dispatched_schedule_device_id].name()
+            print(cmd_txt)
+    return
+
+
 def store_schedule_in_file(store_graphcl_commands: bool, schedule: {},
                            file_name: str, map_proc: {int, dag.Device}, dag_nodes: [dag.Node]) -> int:
     """
@@ -319,49 +416,6 @@ def store_schedule_in_file(store_graphcl_commands: bool, schedule: {},
     print("Store schedule in file:\t", file_name)
     print("------------------------------------------")
 
-    # check if any nodes are reordered if yes set new mapping (device_executor id)
-    for dispatched_schedule_device_id, dispatched_tasks in schedule.items():
-        for schedule_event in dispatched_tasks:
-            for node in dag_nodes:
-                if node.node_id() == schedule_event.task:
-                    if node.executor_id() != dispatched_schedule_device_id:
-                        print("Detected reordered node: ", node.name(), " after schedule")
-                        duration_task = schedule_event.end - schedule_event.start
-                        node.set_node_executor((duration_task, map_proc[dispatched_schedule_device_id]))
-
-    # analyze data-flow to decode data transfers into runtime-commands
-    for dispatched_schedule_device_id, dispatched_tasks in schedule.items():
-        print("---------------------------------")
-        print("Commands for " + map_proc[dispatched_schedule_device_id].name())
-        print("---------------------------------")
-        for schedule_event in dispatched_tasks:
-            # scan events dispatched to the device
-            # for each event scan predecessors to know data-flow
-            # if no predecessor -> nop
-            # if predecessor exist, check who is the executor
-            # finally generate graphCL-API commands:
-            #   1)copy(from,to,what_buffer)
-            #   2)Execute which kernel what device
-            # ------------------------------------------------------------
-
-            # read the task inside the dag via the task_id in schedule
-            current_node = dag_nodes[schedule_event.task]
-            for predecessor in current_node.predecessor_nodes():
-                node_id = current_node.executor_id()
-                if dispatched_schedule_device_id != node_id:
-                    print("----", "Remap dag node after schedule: ", current_node.name(),
-                          map_proc[dispatched_schedule_device_id].name(), "<--->",
-                          map_proc[node_id].name(), "----")
-
-                if predecessor.name() != "":
-                    for out_buffer in predecessor.output_buffers():
-                        for in_buffer in current_node.input_buffers():
-                            if in_buffer.name() == out_buffer.name():  # check if buffers are "connected"
-                                cmd_txt = "Copy from: " + map_proc[predecessor.executor_id()].name() + " to: " + \
-                                          map_proc[dispatched_schedule_device_id].name() + \
-                                          " buffer: " + out_buffer.name()
-                                print(cmd_txt)
-
-            cmd_txt = "Execute " + current_node.name() + " on " + map_proc[dispatched_schedule_device_id].name()
-            print(cmd_txt)
+    # decode_data_flow(schedule, map_proc, dag_nodes)
+    create_dispatch_commands(schedule, map_proc, dag_nodes)
     return 0
