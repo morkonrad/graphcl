@@ -6,6 +6,12 @@
 #include <cstdlib>
 
 constexpr auto tasks = R"(
+						__kernel void merge (global int* A, const global int* B)                        
+						{
+							const int tid = get_global_id(0);                                                       
+							A[tid] = A[tid]+B[tid];
+						}
+
 						__kernel void kA (global int* A)                        
 						{
 							const int tid = get_global_id(0);                                                       
@@ -62,7 +68,7 @@ static auto compare = [](const std::vector<T>& c1,const std::vector<T>& c2,const
 	return ok;
 };
 
-static int test_dag_seq2(const size_t items, virtual_device& device)
+static int test_dag_seq2(const int iterations, const size_t items, virtual_device& device)
 {
 
 	//Simple task_graph consist of 3 tasks
@@ -71,8 +77,12 @@ static int test_dag_seq2(const size_t items, virtual_device& device)
 	/*
 	<BEGIN>
 	[A]
+	 | - ba is otuput of task A
 	 | 
-	[B]
+	 | - ba is input of task B
+	[B] "B is partialy executed on CPU and on GPU
+	 |
+	 |
 	 |
 	[C]
 	<END>
@@ -83,72 +93,83 @@ static int test_dag_seq2(const size_t items, virtual_device& device)
 	//C(B) = 13 >> C=B+2		
 	int err = 0;
 	
-	std::cout << "--------------------------------------" << std::endl;
-	std::cout << "Start DAG with 3 tasks, sequential ..." << std::endl;
-	std::cout << "--------------------------------------" << std::endl;	
-
+	std::cout << "--------------------------------------------------------------------" << std::endl;
+	std::cout << "Start DAG sequential: A(cpu)-->B(25%cpu-75%gpu)-->Merge(gpu)-->C ..." << std::endl;
+	std::cout << "--------------------------------------------------------------------" << std::endl;	
 	
 	auto task_A = device.create_task(tasks, "kA");	
 	auto task_B = device.create_task(tasks, "kB");
-	auto task_C = device.create_task(tasks, "kC");	
+	auto task_C = device.create_task(tasks, "kC");
+	auto task_merge = device.create_task(tasks, "merge");
 
 	map_device_info dev_cpu = { CL_DEVICE_TYPE_CPU,0 };
 	map_device_info dev_gpu = { CL_DEVICE_TYPE_GPU,0 };
 	
 	std::vector<int> zeros(items, 0);
+	const offload_info offload_t1 = { {1.0f,dev_cpu} };
+	// each device executes the part of workload 
+	// CPU 25% work-items , GPU rest
+	const float offload = 0.25f;
+	const offload_info offload_t2 = { {offload, dev_cpu}, {1.0f-offload, dev_gpu} };
+	const offload_info offload_t3 = { { 1.0f,dev_gpu } };
+	const offload_info offload_t4 = { { 1.0f,dev_gpu } };
 
-	for (int it = 0; it < 10; it++)
+	for (int it = 0; it < iterations; it++)
 	{
 		std::cout << "Execute\t";
 
 		auto bA = device.alloc(zeros, true);
 		auto bB = device.alloc(zeros, true);
-		auto bC = device.alloc(zeros);
-
-		const auto cpu = std::make_pair(CL_DEVICE_TYPE_CPU,0);
-		const auto gpu = std::make_pair(CL_DEVICE_TYPE_GPU,0);
+		auto bB_part = device.alloc(zeros, true);
+		auto bC = device.alloc(zeros);	
 
 		const std::array<size_t, 3> gs = { items,1,1 };
 		const std::array<size_t, 3> ls = { 16,1,1 };
 
-		const offload_info offload_t1 = { {1.0f,cpu} };
-		//Set all buffer values = 10
-		err = device.execute_async(task_A, offload_t1, gs,ls, bA);
+		err = device.set_task_args(task_A, bA);
 		on_coopcl_error(err);
 		
-		task_B->add_dependence(task_A.get());
-
-		// each device executes the part of workload 
-		const float offload = 0.25f;
-		const offload_info offload_t2 = { {offload, cpu}, {offload, gpu} };
-		err = device.execute_async(task_B, offload_t2, gs, ls, bA, bB);
+		err = device.set_task_args(task_B, bA, bB);
 		on_coopcl_error(err);
 		
-
-		//TODO: impl. add this
-		// 
-		// Gather chunks of memory to get coherent results
-		//------------------
-		// use offload to calculate offset
-		/*auto data_split = static_cast<size_t>(std::floor(static_cast<float>(items) * offload / static_cast<float>(ls[0]))) * ls[0];
-		const size_t offset = data_split * bB->item_size();
+		err = device.set_task_args(task_merge, bB, bB_part);
+		on_coopcl_error(err);
 		
-		auto wait_task = task_B->get_event_wait_kernel();
-		clAppEvent wait_merge;
-		err = bB->merge_async({ wait_task }, wait_merge, offset, bB->size(), dev_cpu , dev_gpu);
-		on_coopcl_error(err);*/
+		err = device.set_task_args(task_C, bB, bC);
+		on_coopcl_error(err);
 
+		//CPU set all buffer values = 10
+		err = device.enqueue_async(task_A, offload_t1, gs,ls);//A=10
+		on_coopcl_error(err);
 		
-		task_C->add_dependence(task_B.get());
-		const offload_info offload_t3 = { { 1.0f,gpu } };
-		err = device.execute_async(task_C, offload_t3, gs, ls, bB, bC);
+		clAppEvent wait_copy_bA_cpu_gpu;
+		err = bA->copy_async({ task_A->get_event_wait_kernel() }, wait_copy_bA_cpu_gpu, 0, bA->size(), dev_cpu, dev_gpu);
+		on_coopcl_error(err);		
+		
+		task_B->add_dependence(wait_copy_bA_cpu_gpu);
+		err = device.enqueue_async(task_B, offload_t2, gs, ls);//B=A+1 11 part cpu part gpu
+		on_coopcl_error(err);		
+
+		clAppEvent wait_copy_bB_cpu_gpu;
+		err = bB->copy_async({ task_B->get_event_wait_kernel() }, wait_copy_bB_cpu_gpu, 0, bB->size(), dev_cpu, dev_gpu, *bB_part);
+		on_coopcl_error(err);			
+		
+		task_merge->add_dependence(wait_copy_bB_cpu_gpu);
+		err = device.enqueue_async(task_merge, offload_t3, gs, ls); //B=A+1 11 
+		on_coopcl_error(err);		
+		
+		task_C->add_dependence(task_merge.get());
+		err = device.enqueue_async(task_C, offload_t4, gs, ls);//C=B+2
 		on_coopcl_error(err);
 		
 		err = task_C->wait();
 		on_coopcl_error(err);
+		
+		auto tmp_gpu = bB_part->get_debug_data<int>(dev_gpu);
+		auto tmp_cpu = bB_part->get_debug_data<int>(dev_cpu);
 
 		std::cout << " Validate\t";
-		auto begin_ptr = bC->data_in_buffer_device<int>(gpu);
+		auto begin_ptr = bC->data_in_buffer_device<int>(dev_gpu);
 		
 		for (size_t i = 0; i < bC->items(); i++)
 		{
@@ -176,8 +197,7 @@ static int test_dag_seq2(const size_t items, virtual_device& device)
 
 }
 
-
-static int test_dag_seq1(const size_t items, virtual_device& device)
+static int test_dag_seq1(const int iterations, const size_t items, virtual_device& device)
 {
 
 	//Simple task_graph consist of 2 tasks
@@ -204,20 +224,23 @@ static int test_dag_seq1(const size_t items, virtual_device& device)
 	int err = 0;
 
 	std::cout << "--------------------------------------" << std::endl;
-	std::cout << "Start DAG with 2 tasks, sequential ..." << std::endl;
+	std::cout << "Start DAG sequential A(gpu)-->B(cpu) end ..." << std::endl;
 	std::cout << "--------------------------------------" << std::endl;
 
 
 	auto task_A = device.create_task(tasks, "kF");
 	auto task_B = device.create_task(tasks, "kF");
+	
 
 	const auto dev_cpu = std::make_pair(CL_DEVICE_TYPE_CPU,0);
 	const auto dev_gpu = std::make_pair(CL_DEVICE_TYPE_GPU,0);
 	
-	
+	const offload_info offload_t1 = { {1.0f,dev_gpu} };
+	const offload_info offload_t2 = { {1.0f,dev_cpu} };
+
 	std::vector<int> ones(items, 1);
 
-	for (int it = 0; it < 10; it++)
+	for (int it = 0; it < iterations; it++)
 	{
 		std::cout << "Execute\t";
 
@@ -226,13 +249,10 @@ static int test_dag_seq1(const size_t items, virtual_device& device)
 		auto bC = device.alloc<int>(items, nullptr, false);
 
 		task_B->add_dependence(task_A.get());
-
-		const offload_info offload_t1 = { {1.0f,dev_gpu} };	
+	
 		//a+b=c
 		err = device.execute_async(task_A, offload_t1, { items,1,1 }, { 16,1,1 }, bA, bB, bC);
 		on_coopcl_error(err);
-
-		const offload_info offload_t2 = { {1.0f,dev_cpu} };
 		//c+b=a
 		err = device.execute_async(task_B, offload_t2, { items,1,1 }, { 16,1,1 }, bC, bB, bA);
 		on_coopcl_error(err);
@@ -268,7 +288,7 @@ static int test_dag_seq1(const size_t items, virtual_device& device)
 
 }
 
-static int test_dag_par_3GPUs_CPU(const size_t items, virtual_device& device)
+static int test_dag_par_3GPUs_CPU(const int iterations, const size_t items, virtual_device& device)
 {
 	//Simple task_graph consist of 5 tasks
 	// 3 dependent, data parallel tasks B,C,D
@@ -292,6 +312,13 @@ static int test_dag_par_3GPUs_CPU(const size_t items, virtual_device& device)
 	
 	std::cout << "--------------------------------------------" << std::endl;
 	std::cout << "Start DAG with 5 tasks, 3 parallel tasks ..." << std::endl;
+	std::cout << "<BEGIN>" << std::endl;
+	std::cout << "  [A] cpu" << std::endl;
+	std::cout << " | | |" << std::endl;
+	std::cout << "[B][C][D] gpu1||gpu2||gpu3" << std::endl;
+	std::cout << " | | |" << std::endl;
+	std::cout << "  [E]  cpu" << std::endl;
+	std::cout << "<END>" << std::endl;
 	std::cout << "--------------------------------------------" << std::endl;
 	
 	auto task_A = device.create_task( tasks, "kA");
@@ -310,7 +337,13 @@ static int test_dag_par_3GPUs_CPU(const size_t items, virtual_device& device)
 
 	std::vector<int> zeros(items, 0);
 
-	for (int it = 0; it < 10; it++)
+	offload_info exec_a = { { 1.0f,cpu } };
+	offload_info exec_b = { { 1.0f,gpu_a } };
+	offload_info exec_c = { { 1.0f,gpu_b } };
+	offload_info exec_d = { { 1.0f,gpu_c } };
+	offload_info exec_e = { { 1.0f,cpu } };
+
+	for (int it = 0; it < iterations; it++)
 	{
 		std::cout << "Execute\t";
 
@@ -321,33 +354,32 @@ static int test_dag_par_3GPUs_CPU(const size_t items, virtual_device& device)
 		auto bD = device.alloc(zeros, true, cpu);
 		auto bE = device.alloc(zeros, true, cpu);
 		
-		offload_info exec_a = { { 1.0f,cpu } };
+		
 		err = device.execute_async(task_A, exec_a, { items,1,1 }, { 16,1,1 }, bA);
 		on_coopcl_error(err);
 
 		//----------------------------------------
 		//Execute tasks B on gpu_a
-		offload_info exec_b = { { 1.0f,gpu_a } };
 		err = device.execute_async(task_B, exec_b, { items,1,1 }, { 16,1,1 }, bA, bB);
 		on_coopcl_error(err);
 
 
 		//----------------------------------------
 		//Execute tasks C on gpu_b
-		offload_info exec_c = { { 1.0f,gpu_b } };
+		
 		err = device.execute_async(task_C, exec_c, { items,1,1 }, { 16,1,1 }, bA, bC);
 		on_coopcl_error(err);
 
 		
 		//----------------------------------------
 		//Execute tasks D on gpu_c
-		offload_info exec_d = { { 1.0f,gpu_c } };
+		
 		err = device.execute_async(task_D, exec_d, { items,1,1 }, { 16,1,1 }, bA, bD);
 		on_coopcl_error(err);
 
 		//----------------------------------------
 		//Execute tasks E on cpu
-		offload_info exec_e = { { 1.0f,cpu } };
+		
 		err = device.execute_async(task_E, exec_e, { items,1,1 }, { 16,1,1 }, bB, bC, bD, bE);
 		on_coopcl_error(err);
 
@@ -380,7 +412,7 @@ static int test_dag_par_3GPUs_CPU(const size_t items, virtual_device& device)
 	return 0;
 }
 
-static int test_dag_par_2GPUs_CPU(const size_t items, virtual_device& device)
+static int test_dag_par_2GPUs_CPU(const int iterations,const size_t items, virtual_device& device)
 {
 	//Simple task_graph consist of 4 tasks	
 	/*
@@ -401,6 +433,12 @@ static int test_dag_par_2GPUs_CPU(const size_t items, virtual_device& device)
 	
 	std::cout << "---------------------------------------------" << std::endl;
 	std::cout << "Start DAG with 4 tasks, 2 parallel tasks  ..." << std::endl;
+	std::cout << " [A] cpu" << std::endl;
+	std::cout << " | |" << std::endl;
+	std::cout << "[B][C] gpu_1 || gpu_2" << std::endl;
+	std::cout << " | | " << std::endl;
+	std::cout << " [D] cpu" << std::endl;
+	std::cout << "<END>" << std::endl;
 	std::cout << "---------------------------------------------" << std::endl;
 	
 	auto taskA = device.create_task(tasks, "kA");	
@@ -420,7 +458,7 @@ static int test_dag_par_2GPUs_CPU(const size_t items, virtual_device& device)
 
 	std::vector<int> zeros(items, 0);
 
-	for (int it = 0; it < 10; it++)
+	for (int it = 0; it < iterations; it++)
 	{
 		std::cout << "Iteration:\t" << it + 1;
 
@@ -432,50 +470,77 @@ static int test_dag_par_2GPUs_CPU(const size_t items, virtual_device& device)
 		auto mB = device.alloc(zeros, true, cpu);
 		auto mC = device.alloc(zeros, true, cpu);
 		auto mD = device.alloc(zeros, true, cpu);
-
 		
 		offload_info exec_a = { { 1.0f,cpu } };
-		err = device.execute_async(taskA, exec_a, ndr, wgs, mA);
-		on_coopcl_error(err);
-
-		
 		offload_info exec_b = { { 1.0f,gpu_a } };
-		err = device.execute_async(taskB, exec_b, ndr, wgs, mA, mB);
-		on_coopcl_error(err);
-
-		
 		offload_info exec_c = { { 1.0f,gpu_b } };
-		err = device.execute_async(taskC, exec_c, ndr, wgs, mA, mC);
+		offload_info exec_d = { { 1.0f,cpu } };//23
+
+		err = device.execute_async(taskA, exec_a, ndr, wgs, mA);//10
 		on_coopcl_error(err);
 
+		taskB->add_dependence(taskA.get());
 		
-		offload_info exec_d = { { 1.0f,cpu } };
-		err = device.execute_async(taskD, exec_d, ndr, wgs, mB, mC, mD);
+		err = device.execute_async(taskB, exec_b, ndr, wgs, mA, mB);//11
+		on_coopcl_error(err);
+
+		/*taskB->wait();
+
+		std::vector<int> tmpa_cpu(items);
+		std::vector<int> tmpa_gpua(items);
+		std::vector<int> tmpa_gpub(items);
+		
+		auto ma = mA->data_in_buffer_device<int>(cpu);
+		std::memcpy(tmpa_cpu.data(), ma, items * sizeof(int));
+
+		ma = mA->data_in_buffer_device<int>(gpu_a);
+		std::memcpy(tmpa_gpua.data(), ma, items * sizeof(int));
+
+		ma = mA->data_in_buffer_device<int>(gpu_b);
+		std::memcpy(tmpa_gpub.data(), ma, items * sizeof(int));
+
+		std::vector<int> tmpb_cpu(items);
+		std::vector<int> tmpb_gpua(items);
+		std::vector<int> tmpb_gpub(items);
+		
+		auto mb = mB->data_in_buffer_device<int>(cpu);
+		std::memcpy(tmpb_cpu.data(), mb, items * sizeof(int));
+		
+		mb = mB->data_in_buffer_device<int>(gpu_a);
+		std::memcpy(tmpb_gpua.data(), mb, items * sizeof(int));
+
+		mb = mB->data_in_buffer_device<int>(gpu_b);
+		std::memcpy(tmpb_gpub.data(), mb, items * sizeof(int));
+*/
+		taskC->add_dependence(taskA.get());
+		err = device.execute_async(taskC, exec_c, ndr, wgs, mA, mC);//12
+		on_coopcl_error(err);
+
+		taskD->add_dependence(taskB.get());
+		taskD->add_dependence(taskC.get());
+		err = device.execute_async(taskD, exec_d, ndr, wgs, mB, mC, mD);//23
 		on_coopcl_error(err);
 		
 		err = taskD->wait();
 		on_coopcl_error(err);
 
 		//------------------------------------------------
-		//DBG 
-		/*std::vector<int> tmpb_cpu(items);
-		auto mbh = mB->host_double_buffer_memory(gpu_a);
-		std::memcpy(tmpb_cpu.data(), mbh, items * sizeof(int));
+		//DBG
 
 		std::vector<int> tmpc_cpu(items);
-		auto mch = mC->host_double_buffer_memory(gpu_b);
-		std::memcpy(tmpc_cpu.data(), mch, items * sizeof(int));
+		std::vector<int> tmpc_gpua(items);
+		std::vector<int> tmpc_gpub(items);
+		auto mc = mC->data_in_buffer_device<int>(cpu);
+		std::memcpy(tmpc_cpu.data(), mc, items * sizeof(int));
+		
+		mc = mC->data_in_buffer_device<int>(gpu_b);
+		std::memcpy(tmpc_gpua.data(), mc, items * sizeof(int));
 
-		std::vector<int> tmpb(items);		
-		auto mb = mB->data_in_buffer<int>(gpu_a);
-		std::memcpy(tmpb.data(), mb, items * sizeof(int));
-
-		std::vector<int> tmpc(items);
-		auto mc = mC->data_in_buffer<int>(gpu_b);
-		std::memcpy(tmpc.data(), mc, items * sizeof(int));*/
+		mc = mC->data_in_buffer_device<int>(gpu_b);
+		std::memcpy(tmpc_gpub.data(), mc, items * sizeof(int));
 
 		auto begin_ptr = mD->data_in_buffer_device<int>(cpu);
-		//auto begin_ptr = static_cast<const int*>(mD->host_begin());
+		
 
 		for (int i = 0;i < items;i++)
 		{
@@ -502,29 +567,38 @@ static int test_dag_par_2GPUs_CPU(const size_t items, virtual_device& device)
 
 }
 
+
+
 int main()
 {
 	int ok = 0;
 
 	std::string status;
 	virtual_device device(status);
-
-	ok = test_dag_seq1(128, device);
-	if (ok != 0)return ok;
-
-	/*ok = test_dag_seq2(128, device);
-	if (ok != 0)return ok;
-
-	if (device.cnt_devices() > 2)
+	
+	//4096*4096=67MB
+	const auto items = 1024;
+	const auto iterations = 4;
+	
+	if (device.cnt_gpus() >= 1)
 	{
-		ok = test_dag_par_2GPUs_CPU(128 * 1e4, device);
+		ok = test_dag_seq1(iterations,items, device);
+		if (ok != 0)return ok;
+
+		ok = test_dag_seq2(iterations, items, device);
+		if (ok != 0)return ok;
+	}
+	
+	if (device.cnt_gpus() >= 2)
+	{
+		ok = test_dag_par_2GPUs_CPU(iterations, items, device);
 		if (ok != 0)return ok;
 	}
 
-	if (device.cnt_devices() > 3)
+	if (device.cnt_gpus() >= 3)
 	{
-		ok = test_dag_par_3GPUs_CPU(1024 * 1e3, device);
+		ok = test_dag_par_3GPUs_CPU(iterations, items, device);
 		if (ok != 0)return ok;
-	}*/
+	}
 	return ok;
 }
