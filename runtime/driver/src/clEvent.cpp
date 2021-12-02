@@ -78,7 +78,9 @@ static int register_end_of_event(const size_t pool_id,const float sleep_duration
     return err;
 }
 
-static std::future<int> start_user_events_callback(const cl_event event_in, std::vector<cl::UserEvent>& user_events)
+//static std::mutex  lock_event_app;
+
+static std::future<int> start_user_events_callback(const cl_event event_in, std::vector<std::unique_ptr<cl::UserEvent>>& user_events)
 {	
     //std::cout << "Pool event status ... \n" << std::flush;
     //auto async_call = std::async([event_in,&user_events]
@@ -106,9 +108,11 @@ static std::future<int> start_user_events_callback(const cl_event event_in, std:
                               {
                                   for (auto& user_event : user_events)
                                   {
-                                      err = user_event.setStatus(CL_COMPLETE);
-                                      if (on_coopcl_error(err) != 0)
-                                          return err;
+									  {
+										  err = user_event->setStatus(CL_COMPLETE);
+										  if (on_coopcl_error(err) != 0)
+											  return err;
+									  }
                                   }
 
                                   register_end_of_event(pool_id, sleep_duration_sec, event_in);
@@ -126,19 +130,20 @@ static std::future<int> start_user_events_callback(const cl_event event_in, std:
     //return async_call;
 }
 
-static int set_user_events_callback(cl_event event_in, std::vector<cl::UserEvent>& user_events)
+static int set_user_events_callback(cl_event event_in, std::vector<std::unique_ptr<cl::UserEvent>>& user_events)
 {
     return clSetEventCallback(event_in, CL_COMPLETE, [](cl_event ev, cl_int status, void* user_data)
         {
-            auto user_events = static_cast<std::vector<cl::UserEvent>*>(user_data);
+           auto user_events = static_cast<std::vector<std::unique_ptr<cl::UserEvent>>*>(user_data);
             if (user_events == nullptr)return;
 
             for (auto& user_event : *user_events)
             {
-                auto err = user_event.setStatus(status);
-                if (on_coopcl_error(err) != 0)return;
+				{
+					auto err = user_event->setStatus(status);
+					if (on_coopcl_error(err) != 0)return;
+				}
             }
-
             register_end_of_event(0, 0, ev);
             return;
         }, &user_events);
@@ -150,61 +155,73 @@ static int set_user_events_callback(cl_event event_in, std::vector<cl::UserEvent
  * @param map_device_context
  * @return
  */
-int clAppEvent::register_and_create_user_events(const cl::Event& event, const std::map<map_device_info, const cl::Context*>& map_device_context, const bool is_enqueue_ndr_event)
+
+
+int clAppEvent::register_and_create_user_events(std::unique_ptr<cl::Event>& event, const std::map<map_device_info, const cl::Context*>& map_device_context, const bool is_enqueue_ndr_event)
 {
-    //copy the input event and create user_events in other context than the input event
-    int err = 0;
+	//copy the input event and create user_events in other context than the input event
+	int err = 0;
 
-    if (event() == nullptr)return CL_INVALID_EVENT;
+	if (event == nullptr)return CL_INVALID_EVENT;
+	if ((*event)() == nullptr)return CL_INVALID_EVENT; //empty event
 
-    auto ev_ctx = event.getInfo<CL_EVENT_CONTEXT>(&err);
-    if (on_coopcl_error(err) != CL_SUCCESS)
-        return err;
+	auto ev_ctx = event->getInfo<CL_EVENT_CONTEXT>(&err);
+	if (on_coopcl_error(err) != CL_SUCCESS)
+		return err;
 
-    const auto ptr_ctx_current = ev_ctx();
-    auto& [event_in, user_events] = _user_events[_created_event_id++];
-    event_in = event; //copy this event;
-    
-    /// Cross-context (CPU-GPU) communication with user_event callbacks is possible, it works! 
+	const auto ptr_ctx_current = ev_ctx();
+	if (_created_event_id > _max_events - 1)
+		return -1;
+
+
+	auto&[event_in, user_events] = _user_events[_created_event_id++];
+	event_in = std::move(event); //move this event here;
+
+    /// Cross-context (CPU-GPU) communication with user_event callbacks is possible, it works!
     ///  it generates communication overhead, that depends on GPU_driver
     ///  ----
-    ///  For exmaple: WIN64_NV_driver is bit-slower than Linux64_NV_driver
-    ///  NV-driver has strange bug realted to the event_callback of write buffer command, ndr enqueue works fine!
+    ///  For example: WIN64_NV_driver is bit-slower than Linux64_NV_driver
+    ///  NV-driver has strange bug related to the event_callback of write buffer command, ndr enqueue works fine!
     ///  ----
     ///  AMD_WIN_LINUX_driver still have to benchmark
-    for (auto& [deviece_type_id, ctx_dev_other] : map_device_context)
+
+    for (auto&[deviece_type_id, ctx_dev_other] : map_device_context)
     {
         const auto ptr_ctx_other = (*ctx_dev_other)();
 
         if (ptr_ctx_other != ptr_ctx_current)
         {
-            user_events.push_back(cl::UserEvent(*ctx_dev_other, &err));
+            user_events.push_back(std::make_unique<cl::UserEvent>(*ctx_dev_other, &err));
             if (on_coopcl_error(err) != 0)
                 return err;
         }
     }
-
-    if(_debug_callback_)
+    if (_debug_callback_)
     {
         const std::lock_guard<std::mutex> lock(chrono_mutex);
         _start_calback = std::chrono::steady_clock::now();
     }
+#ifdef USE_NV_DRIVER
+	_async_call_pool_event_status = start_user_events_callback((*event_in)(), user_events);
+	_use_async_event_callback = true;
+#else
+	err = set_user_events_callback((*event_in)(), user_events);
+	_use_async_event_callback = false;
+#endif 
 
-    _use_async_event_callback = false;
-    if (is_enqueue_ndr_event)
-        err = set_user_events_callback(event_in(), user_events);
-    else
-    {
-        _async_call_pool_event_status = start_user_events_callback(event_in(), user_events);
-        _use_async_event_callback = true;
-    }
-
-    return err;
+	return err;
 }
 
 clAppEvent::~clAppEvent()
 {
     int err = 0;
+	
+	if (_wait_copy_async.valid()) {
+		err = _wait_copy_async.get();
+		if (on_coopcl_error(err) != CL_SUCCESS)
+			std::cerr << ("On destroy clEvent: logic-usage fatal error, FIXME !!!") << std::endl;
+	}
+
     if (_use_async_event_callback)
     {
         if (_async_call_pool_event_status.valid())
@@ -214,6 +231,7 @@ clAppEvent::~clAppEvent()
                 std::cerr << ("On destroy clEvent: logic-usage fatal error, FIXME !!!") << std::endl;
         }
     }
+
     err = wait();
     if (on_coopcl_error(err) != CL_SUCCESS)
         std::cerr << ("On destroy clEvent: logic-usage fatal error, FIXME !!!") << std::endl;
@@ -222,25 +240,26 @@ clAppEvent::~clAppEvent()
 int clAppEvent::get_events_in_context(const cl::Context* query_ctx, std::vector<cl::Event>& found_events) const
 {
     int err = 0;
-    for (auto id=0;id< _created_event_id;id++)
-    {
-        auto& [event, user_events] = _user_events[id];
-        auto ev_ctx = event.getInfo<CL_EVENT_CONTEXT>(&err);
-        if (on_coopcl_error(err) != CL_SUCCESS)
-            return err;
+    
+	for (auto id=0;id< _created_event_id;id++)
+	{
+		auto& [event, user_events] = _user_events[id];
+		auto ev_ctx = event->getInfo<CL_EVENT_CONTEXT>(&err);
+		if (on_coopcl_error(err) != CL_SUCCESS)
+			return err;
 
-        if (ev_ctx() == (*query_ctx)())
-            found_events.push_back(event);
+		if (ev_ctx() == (*query_ctx)())
+			found_events.push_back(*event);
 
-        for (auto& uev : user_events)
-        {
-            auto uev_ctx = uev.getInfo<CL_EVENT_CONTEXT>(&err);
-            if (on_coopcl_error(err) != CL_SUCCESS)
-                return err;
-            if (uev_ctx() == (*query_ctx)())
-                found_events.push_back(uev);
-        }
-    }
+		for (auto& uev : user_events)
+		{
+			auto uev_ctx = uev->getInfo<CL_EVENT_CONTEXT>(&err);
+			if (on_coopcl_error(err) != CL_SUCCESS)
+				return err;
+			if (uev_ctx() == (*query_ctx)())
+				found_events.push_back(*uev);
+		}
+	}
     return err;
 }
 
@@ -251,16 +270,16 @@ int clAppEvent::wait() const
     {
         auto& [event, user_events] = _user_events[id];
 
-        if (event() != nullptr)
+        if ((*event)() != nullptr)
         {
-            err = event.wait();
+            err = event->wait();
             if (on_coopcl_error(err) != CL_SUCCESS)
                 return err;
         }
         for (auto& uev : user_events)
         {
-            if (uev() != nullptr) {
-                err = uev.wait();
+            if (uev != nullptr) {
+                err = uev->wait();
                 if (on_coopcl_error(err) != CL_SUCCESS)
                     return err;
             }
@@ -273,27 +292,27 @@ float clAppEvent::duration(const float scale_factor) const
 {
     std::vector<cl_ulong> parallel_durations;
 
-    for (auto id = 0; id < _created_event_id; id++)
-    {
-        auto& [event, user_events] = _user_events[id];
+	for (auto id = 0; id < _created_event_id; id++)
+	{
+		auto& [event, user_events] = _user_events[id];
 
-        auto err = wait();
-        if (err != 0) return 0.0f;
+		auto err = wait();
+		if (err != 0) return 0.0f;
 
-        cl_ulong ev_duartion = 0;     
+		cl_ulong ev_duartion = 0;
 
-        cl_ulong start = 0, end = 0;
-        err = clGetEventProfilingInfo(event(), CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, nullptr);
-        if (on_coopcl_error(err) != 0)
-            return 0.0f;
+		cl_ulong start = 0, end = 0;
+		err = clGetEventProfilingInfo((*event)(), CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, nullptr);
+		if (on_coopcl_error(err) != 0)
+			return 0.0f;
 
-        err = clGetEventProfilingInfo(event(), CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, nullptr);
-        if (on_coopcl_error(err) != 0)
-            return 0.0f;
+		err = clGetEventProfilingInfo((*event)(), CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, nullptr);
+		if (on_coopcl_error(err) != 0)
+			return 0.0f;
 
-        ev_duartion = (cl_ulong)(end - start);
-        parallel_durations.push_back(ev_duartion);
-    }
+		ev_duartion = (cl_ulong)(end - start);
+		parallel_durations.push_back(ev_duartion);
+	}
 
     if (parallel_durations.empty())
         return  0.0f;

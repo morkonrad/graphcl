@@ -21,8 +21,7 @@ class clTask
 	std::string _name{ "" };
 	
 	std::unique_ptr<clAppEvent> _event_exec_kernel;
-	std::vector<const clAppEvent*> _events_to_wait;	
-
+	std::vector<const clAppEvent*> _events_to_wait_for_memory_copy;
 	std::vector<const clTask*> _dependent_tasks;
 
 	std::uint8_t _queue_id = 0;
@@ -122,14 +121,23 @@ public:
 	void set_queue_id(const std::uint8_t queue_id) { _queue_id = queue_id; }
 
 	void add_dependence(const std::vector<clAppEvent>& events_in);
-
+	
 	void add_dependence(const clAppEvent& event_in);
-
+	
 	void add_dependence(const clTask* other_task);
 
-	const std::vector <const clAppEvent*> get_predecessors_wait_list()const
+	const std::vector <const clAppEvent*> get_wait_list()const
 	{
 		std::vector<const clAppEvent*> events_to_wait;
+		
+		//First copy events added/set by the add_dependence API, for example copy_memory command
+		if (!_events_to_wait_for_memory_copy.empty())
+		{
+			for(const auto& ev:_events_to_wait_for_memory_copy)
+				events_to_wait.push_back(ev);
+		}
+		
+		//Scan predecessors and get their events
 		for (auto& dep_task : _dependent_tasks) 
 		{
 			auto event = dep_task->get_event_wait_kernel();
@@ -178,8 +186,8 @@ public:
 			return err;
 		id++;
 		
-		/*if(wait_event_out->count_events()>0)
-			wait_events_out.push_back(std::move(wait_event_out));*/
+		if(wait_event_out->is_created())
+			wait_events_out.push_back(std::move(wait_event_out));
 
 		return transfer_kernel_inputs_async(wait_events_in, wait_events_out, offload_devices, id, rest...);
 	}

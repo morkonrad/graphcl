@@ -32,6 +32,8 @@ class clMemory
 	size_t _single_item_size_bytes{ 0 };
 	size_t _size_bytes{ 0 };
 	
+	void* _host_tmp_buffer{ nullptr };
+
 private:	
 
 	int async_transfer_d2d(
@@ -64,21 +66,33 @@ private:
 		const map_device_info& device_type_id, const size_t begin_byte = 0, const size_t end_byte = 0)const;
 
 	int check_scatter_to_gpus();
-
 	int check_map_access_latency_from_host_to_device_mem(const bool map_read, const std::uint8_t gpu_id = 0)const;
-
 	int check_map_access_latency_from_host_to_pinned_mem(const bool map_read, const std::uint8_t gpu_id = 0)const;
-
 	int check_copy_from_to_pinned_mem(const bool write_pinned, const std::uint8_t gpu_id)const;
-
 	int check_copy_from_gpu_to_gpu(const std::uint8_t gpu_id_src, const std::uint8_t gpu_id_dst)const;
 
-	int copy_async_h2h(
+	int copy_async_cpu_device(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in,
+		clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, const map_device_info& other_device_id,
+		cl::Buffer& application_buffer, cl::Buffer& device_buffer)const;
+
+	int copy_async_cpu_gpu(
 		const bool h2d,
 		const std::vector<const clAppEvent*>& wait_events_in,
 		clAppEvent& wait_event_out,
 		const size_t begin_byte, const size_t end_byte,
 		const map_device_info& destination_device);
+
+	int copy_async_cpu_gpu(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in,
+		clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, const map_device_info& other_device_id, clMemory& other);
+	
+
+	int copy_async_host_gpu(const bool h2d, 
+		const std::vector<const clAppEvent*>& wait_events_in,
+		clAppEvent& wait_event_out, 
+		const size_t begin_byte, 
+		const size_t end_byte, 
+		const map_device_info& gpu_device_id_src,
+		const map_device_info& gpu_device_id_dst);
 
 public:
 	clMemory() = default;
@@ -113,6 +127,16 @@ public:
 		return static_cast<const T*>(map_ptr);
 	}
 
+	template<typename T>
+	std::vector<T> get_debug_data(const map_device_info& device_type_id, const size_t begin_byte = 0, const size_t end_byte = 0)const
+	{
+		int err = 0;
+		std::vector<T> data(items(),0);
+		auto map_ptr = map_read_data(true, device_type_id, begin_byte, end_byte);
+		if(map_ptr) std::memcpy(&data[0], map_ptr, _size_bytes);		
+		return data;
+	}
+
 	bool is_input()const { return _is_input; }
 	void set_as_input(const bool is_input) { _is_input = is_input; }
 
@@ -136,13 +160,17 @@ public:
 		clAppEvent& wait_event_out,
 		const size_t begin_byte, const size_t end_byte,
 		const map_device_info& source_device,
-		const map_device_info& destination_device);
+		const map_device_info& destination_device, 
+		clMemory* ptr_target_memory=nullptr);
 
-	int merge_async(const std::vector<const clAppEvent*>& wait_events_in,
+	int copy_async(
+		const std::vector<const clAppEvent*>& wait_events_in,
 		clAppEvent& wait_event_out,
-		const size_t begin_byte, const size_t end_byte,
+		const size_t begin_byte,
+		const size_t end_byte,
 		const map_device_info& source_device,
-		const map_device_info& destination_device);
+		const map_device_info& destination_device,
+		clMemory& destination);
 	
 	
 };

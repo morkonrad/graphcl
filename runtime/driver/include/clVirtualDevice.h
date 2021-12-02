@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "clTask.h"
 
 
@@ -35,20 +35,9 @@ class virtual_device
 		KernelArgs&... kargs)
 	{
 		int err = 0;
-
-		//get kernel objects
-		const auto task_name = task->name();
-		for (auto& [ctx, cldev] : _map_devices)
-			cldev.select_kernel_to_execute(task_name);
-
-		//set kernel args 
-		//set clMemory IN or OUT flag dependent on the kernel arguments
-		//if any global pointer is marked with const than runtime detects
-		//that this argument is input-read-only else output
 		std::uint8_t id = 0;
-		err = task->set_task_args(id, kargs...);
-		if (on_coopcl_error(err) != CL_SUCCESS)
-			return err;
+		err = set_task_args(task, kargs...);
+		if (on_coopcl_error(err) != CL_SUCCESS)return err;
 
 		//Enqueue H2D(inputs) and D2H(outputs) transfer
 		const bool use_cout_transfers = 0;
@@ -56,9 +45,9 @@ class virtual_device
 			std::cout <<"check transfer_kernel_inputs_async ..."<<std::endl;
 
 		id = 0;		
-		auto wait_list_predecessors = task->get_predecessors_wait_list();
-		std::vector<std::unique_ptr<clAppEvent>> wait_transfer_inputs;
-		err = task->transfer_kernel_inputs_async(wait_list_predecessors, wait_transfer_inputs, offload_devices, id, kargs...);
+		auto wait_list_predecessors = task->get_wait_list();
+		std::vector<std::unique_ptr<clAppEvent>> wait_for_transfer_inputs;
+		err = task->transfer_kernel_inputs_async(wait_list_predecessors, wait_for_transfer_inputs, offload_devices, id, kargs...);
 		if (on_coopcl_error(err) != CL_SUCCESS)
 			return err;
 
@@ -66,7 +55,7 @@ class virtual_device
 			std::cout << "enqueue kernel ..." << std::endl;
 
 		const bool dbg_use_cout_kernel_ndr = 0;
-		if (wait_transfer_inputs.size() == 0)
+		if (wait_for_transfer_inputs.size() == 0)
 		{
 			//Enqueue kernel execution        
 			err = task->async_execute(
@@ -79,7 +68,7 @@ class virtual_device
 		{
 			//Enqueue kernel execution        
 			err = task->async_execute(
-				wait_transfer_inputs,
+				wait_for_transfer_inputs,
 				global_size,
 				local_size,
 				ndr_splits, dbg_use_cout_kernel_ndr);
@@ -236,7 +225,68 @@ public:
 
 	}
 
+	template <typename... KernelArgs>
+	int enqueue_async(
+		std::unique_ptr<clTask>& task,
+		const offload_info& offload_devices,
+		const std::array<size_t, 3>& global_size,
+		const std::array<size_t, 3>& local_size)
+	{
+		int err = 0;
+		//partition NDRange in sub_ranges for all offload_devices
+		const std::array<size_t, 3>& offsets = { 0,0,0 };
+		const auto ndr_divisions = TaskArgs::calculate_ndr_division(
+			global_size, local_size, _map_devices, offload_devices, offsets);
 
+		//get kernel objects
+		const auto task_name = task->name();
+		for (auto&[ctx, cldev] : _map_devices)
+			cldev.select_kernel_to_execute(task_name);
+
+		auto wait_list_predecessors = task->get_wait_list();		
+		const bool use_dump = false;
+		//Enqueue kernel execution        
+		err = task->async_execute(wait_list_predecessors,global_size,local_size, ndr_divisions,use_dump);
+		if (on_coopcl_error(err) != CL_SUCCESS)
+			return err;
+
+		return err;
+	}
+
+	template <typename T>
+	int set_task_arg(std::unique_ptr<clTask>& task, const std::uint8_t arg_id,T arg)
+	{
+		//get kernel objects
+		const auto task_name = task->name();
+		for (auto&[ctx, cldev] : _map_devices)
+			cldev.select_kernel_to_execute(task_name);
+
+        auto err = task->set_task_arg(arg_id, arg);
+		if (on_coopcl_error(err) != CL_SUCCESS)
+			return err;
+
+		return err;
+	}
+
+	template <typename... KernelArgs>
+	int set_task_args(std::unique_ptr<clTask>& task, KernelArgs&... kargs)
+	{
+		//get kernel objects
+		const auto task_name = task->name();
+		for (auto& [ctx, cldev] : _map_devices)
+			cldev.select_kernel_to_execute(task_name);
+
+		//set kernel args. 
+		//set clMemory IN or OUT flag dependent on the kernel arguments
+		//if any global pointer is marked with const than runtime detects
+		//that this argument is input-read-only else output
+		std::uint8_t id = 0;
+		auto err = task->set_task_args(id, kargs...);
+		if (on_coopcl_error(err) != CL_SUCCESS)
+			return err;	
+
+		return err;
+	}
 
 	int flush()const
 	{

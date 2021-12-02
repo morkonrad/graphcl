@@ -1,6 +1,8 @@
 ﻿#include "clMemory.h"
 #include <iostream>
 
+#define _d2d_use_direct_copy_
+//#define _h2d_d2h_v0
 
 int clMemory::allocate(
     const std::tuple<const cl_device_id, const cl::CommandQueue*, const cl::Context*>&  device_command_queue_context,
@@ -44,10 +46,15 @@ int clMemory::allocate(
     _map_device_type_id[cldevice] = device_type_id;
     _map_device_type_conetxt[device_type_id] = context;
 
+	const bool pinned_double_buffer_exist = _host_tmp_buffer == nullptr ? false : true;
+
     //allocate memory on device and on host(app)
     if (dev_type == CL_DEVICE_TYPE_CPU)
     {
-        _map_device_app_buffers[cldevice] = { cl::Buffer(*context, flag_alloc_device_buffer, size_items_bytes, nullptr, &err),cl::Buffer() };
+		if(pinned_double_buffer_exist)
+			_map_device_app_buffers[cldevice] = { cl::Buffer(*context, flag_alloc_device_buffer|CL_MEM_USE_HOST_PTR, size_items_bytes, _host_tmp_buffer, &err),cl::Buffer() };
+		else
+			_map_device_app_buffers[cldevice] = { cl::Buffer(*context, flag_alloc_device_buffer, size_items_bytes, nullptr, &err),cl::Buffer() };
         if (on_coopcl_error(err) != CL_SUCCESS)return err;
     }
     else
@@ -74,18 +81,22 @@ int clMemory::allocate(
         auto device_buffer = cl::Buffer(*context, flag_alloc_device_buffer, size_items_bytes, nullptr, &err_alloc_dev_mem);
 
 #else		
-        auto application_buffer = cl::Buffer(*context, flag_alloc_app_buffer, size_items_bytes, nullptr, &err_alloc_app_mem);
+		auto application_buffer = cl::Buffer(*context, flag_alloc_app_buffer, size_items_bytes, nullptr, &err_alloc_app_mem);
         auto device_buffer = cl::Buffer(*context, flag_alloc_device_buffer, size_items_bytes, nullptr, &err_alloc_dev_mem);
 #endif
+        //TODO: to avoid deferred allocation (allocation on first usage) of buffer start simple kernel that read few elements 
+        //in this way the statistic of repetitive usage is than clean!
 
-        ///Pre-pin this buffer on first-use time!
-        cl::Event wait_map;
-        auto cq = _map_device_queue_io.at(cldevice);
-        int* map_ptr =static_cast<int*>(cq->enqueueMapBuffer(application_buffer, true, CL_MAP_WRITE, 0, _size_bytes, nullptr, nullptr, &err));
-        if (on_coopcl_error(err) != 0)return  err;
-        *map_ptr = 0;
-        err = cq->enqueueUnmapMemObject(application_buffer, map_ptr, nullptr, &wait_map);
-        if (on_coopcl_error(err) != 0)return  err;
+        ///store Pre-pinned address
+		//if (!pinned_double_buffer_exist){
+
+			auto cq = _map_device_queue_io.at(cldevice);
+			_host_tmp_buffer = cq->enqueueMapBuffer(application_buffer, true, CL_MAP_READ | CL_MAP_WRITE, 0, _size_bytes, nullptr, nullptr, &err);
+			if (on_coopcl_error(err) != 0)return  err;
+
+			err = cq->enqueueUnmapMemObject(application_buffer, _host_tmp_buffer);
+			if (on_coopcl_error(err) != 0)return  err;		
+		//}
 
         if (on_coopcl_error(err_alloc_app_mem) != CL_SUCCESS)return err_alloc_app_mem;
         if (on_coopcl_error(err_alloc_dev_mem) != CL_SUCCESS)return err_alloc_dev_mem;
@@ -131,9 +142,13 @@ int clMemory::copy_application_memory(const void* src_application, const size_t 
                 auto& [device_memory, app_memory] = device_app_buffers;
 
                 // cpu has only device buffer, cpu shares device memory with application, thus use device_memory
+#ifdef _h2d_d2h_v0
                 auto& dst_buffer = dev_type == CL_DEVICE_TYPE_CPU ? device_memory : app_memory;
                 err = map_memory_sync(dst_buffer, *_map_device_queue_io.at(cldevice), CL_MAP_WRITE_INVALIDATE_REGION, (void*)src_application, _size_bytes);
+#else
+                err = map_memory_sync(device_memory, *_map_device_queue_io.at(cldevice), CL_MAP_WRITE_INVALIDATE_REGION, (void*)src_application, _size_bytes);
                 if (on_coopcl_error(err) != CL_SUCCESS)return err;
+#endif
             }
         }
     }
@@ -162,67 +177,205 @@ auto find_device = [](const map_device_info& query_device_type_id,
     return device_cl;
 };
 
-int clMemory::copy_async_h2h(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in, 
+int clMemory::copy_async_host_gpu(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in,
+	clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, 
+    const map_device_info& gpu_device_id_src,
+    const map_device_info& gpu_device_id_dst)
+{	
+	//get gpu-device,queue,buffers other device
+	const auto gpu_src = find_device(gpu_device_id_src, _map_device_type_id);
+	auto& [app_buffer_gpu_src, device_buffer_gpu_src] = _map_device_app_buffers.at(gpu_src);
+	auto cq_src = _map_device_queue_io.at(gpu_src);
+	auto ctx_src = _map_device_type_conetxt.at(gpu_device_id_src);
+
+	//get gpu-device,queue,buffers other device
+	const auto gpu_dst = find_device(gpu_device_id_dst, _map_device_type_id);	
+    auto& [app_buffer_gpu_dst, device_buffer_gpu_dst] = _map_device_app_buffers.at(gpu_dst);
+	auto cq_dst = _map_device_queue_io.at(gpu_dst);
+	auto ctx_dst = _map_device_type_conetxt.at(gpu_device_id_dst);
+
+	const auto size = end_byte - begin_byte;
+	int err{ 0 };
+	auto map_ctx = _map_device_type_conetxt;
+
+	if (_host_tmp_buffer==nullptr)
+		return -1;
+	
+    if (h2d)
+	{		
+		std::vector<cl::Event> wait_list;
+		//gather wait_events from context
+		for (auto& wait_event_in : wait_events_in) {
+			err = wait_event_in->get_events_in_context(ctx_dst, wait_list);
+			if (on_coopcl_error(err) != 0) return err;
+		}
+
+		//auto async_call = std::async([map_ctx,cq_cpu, cq_other, device_buffer_other, app_buffer_cpu, begin_byte, size, &wait_event_out, wait_list]
+		//{
+		int err = 0;
+		auto wait_ev_copy = std::make_unique<cl::Event>();
+      
+        // Write to the device memory of dst_gpu
+		err = cq_dst->enqueueWriteBuffer(device_buffer_gpu_dst, false, begin_byte, size, _host_tmp_buffer, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+
+		err = cq_dst->flush();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = wait_event_out.register_and_create_user_events(wait_ev_copy, map_ctx);
+		if (on_coopcl_error(err) != 0) return err;
+
+		return err;
+		//});		
+		//wait_event_out.set_async_wait_copy(async_call);
+	}
+	else
+	{
+
+		std::vector<cl::Event> wait_list;
+		//gather wait_events from context
+		for (auto& wait_event_in : wait_events_in) {
+			err = wait_event_in->get_events_in_context(ctx_src, wait_list);
+			if (on_coopcl_error(err) != 0) return err;
+		}
+
+		int err = 0;
+		auto wait_ev_copy = std::make_unique<cl::Event>();
+
+        // Write from GPU to mapped-host memory
+		err = cq_src->enqueueReadBuffer(device_buffer_gpu_src, false, begin_byte, size, _host_tmp_buffer, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+
+		err = cq_src->flush();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = wait_event_out.register_and_create_user_events(wait_ev_copy, map_ctx);
+		if (on_coopcl_error(err) != 0) return err;
+	}
+	return err;
+}
+
+int clMemory::copy_async_cpu_device(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in,
+	clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, const map_device_info& other_device_id,
+	cl::Buffer& application_buffer, cl::Buffer& device_buffer)const
+{
+	//get device,queue,buffers CPU-HOST
+	const auto cpu_id = std::make_pair(CL_DEVICE_TYPE_CPU, 0);
+	const auto cpu_device = find_device(cpu_id, _map_device_type_id);
+	auto cq_cpu = _map_device_queue_io.at(cpu_device);
+	auto&[app_buffer_cpu, device_buffer_cpu] = _map_device_app_buffers.at(cpu_device);
+	auto ctx_cpu = _map_device_type_conetxt.at(cpu_id);
+
+	//get device,queue,buffers other device
+	const auto other_device = find_device(other_device_id, _map_device_type_id);
+	auto cq_other = _map_device_queue_io.at(other_device);
+	auto ctx_other = _map_device_type_conetxt.at(other_device_id);
+
+	const auto size = end_byte - begin_byte;
+	int err{ 0 };
+
+	std::vector<cl::Event> wait_list;
+	//gather wait_events from context
+	for (auto& wait_event_in : wait_events_in) {
+		err = wait_event_in->get_events_in_context(ctx_other, wait_list);
+		if (on_coopcl_error(err) != 0) return err;
+	}
+
+	auto map_ctx = _map_device_type_conetxt;
+	if (h2d)
+	{
+		//auto async_call = std::async([map_ctx,cq_cpu, cq_other, device_buffer_other, app_buffer_cpu, begin_byte, size, &wait_event_out, wait_list]
+		//{
+
+		std::vector<cl::Event> wait_list_cpu;
+		//gather wait_events from context
+		for (auto& wait_event_in : wait_events_in) {
+			err = wait_event_in->get_events_in_context(ctx_cpu, wait_list_cpu);
+			if (on_coopcl_error(err) != 0) return err;
+		}
+
+		int err = 0;
+		auto wait_ev_copy = std::make_unique<cl::Event>();
+		auto map_ptr_cpu = cq_cpu->enqueueMapBuffer(app_buffer_cpu, true, CL_MAP_READ, begin_byte, size,&wait_list_cpu);
+		if (on_coopcl_error(err) != 0)return err;
+
+		//std::vector<int> dbg(items());
+		//std::memcpy(dbg.data(), map_ptr_cpu, _size_bytes);
+
+#ifdef _h2d_d2h_v0
+		err = cq_other->enqueueWriteBuffer(application_buffer, false, begin_byte, size, map_ptr_cpu, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+		//err = wait_ev_copy->wait();
+		//if (on_coopcl_error(err) != 0)return err;
+#else
+		err = cq_other->enqueueWriteBuffer(device_buffer, false, begin_byte, size, map_ptr_cpu, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+#endif	
+
+		//cl::Event wait_unmap;
+		err = cq_cpu->enqueueUnmapMemObject(app_buffer_cpu, map_ptr_cpu);// , nullptr, &wait_unmap);
+		if (on_coopcl_error(err) != 0)return err;
+		
+		//err = wait_unmap.wait();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = cq_other->flush();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = wait_event_out.register_and_create_user_events(wait_ev_copy, map_ctx);
+		if (on_coopcl_error(err) != 0) return err;
+
+		return err;
+		//});		
+		//wait_event_out.set_async_wait_copy(async_call);
+	}
+	else
+	{
+		int err = 0;
+		auto wait_ev_copy = std::make_unique<cl::Event>();
+		auto map_ptr_cpu = cq_cpu->enqueueMapBuffer(app_buffer_cpu, true, CL_MAP_WRITE, begin_byte, size);
+		if (on_coopcl_error(err) != 0)return err;
+
+#ifdef _h2d_d2h_v0
+		err = cq_other->enqueueReadBuffer(application_buffer, false, begin_byte, size, map_ptr_cpu, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+#else
+		err = cq_other->enqueueReadBuffer(device_buffer, false, begin_byte, size, map_ptr_cpu, &wait_list, wait_ev_copy.get());
+		if (on_coopcl_error(err) != 0)return err;
+#endif
+		cl::Event wait_unmap;
+		err = cq_cpu->enqueueUnmapMemObject(app_buffer_cpu, map_ptr_cpu, nullptr, &wait_unmap);
+		if (on_coopcl_error(err) != 0)return err;
+
+		err = wait_unmap.wait();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = cq_other->flush();
+		if (on_coopcl_error(err) != 0) return err;
+
+		err = wait_event_out.register_and_create_user_events(wait_ev_copy, map_ctx);
+		if (on_coopcl_error(err) != 0) return err;
+	}
+	return err;
+}
+
+int clMemory::copy_async_cpu_gpu(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in, 
 	clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, const map_device_info& other_device_id)
 {	
-    //get device,queue,buffers CPU-HOST
-    const auto cpu_id = std::make_pair(CL_DEVICE_TYPE_CPU, 0);
-    const auto cpu_device = find_device(cpu_id,_map_device_type_id);
-    auto cq_cpu = _map_device_queue_io.at(cpu_device);
-    auto& [app_buffer_cpu, device_buffer_cpu] = _map_device_app_buffers.at(cpu_device);
-    auto ctx_cpu = _map_device_type_conetxt.at(cpu_id);
+	const auto other_device = find_device(other_device_id, _map_device_type_id);
+	auto& [device_buffer_other, app_buffer_other] = _map_device_app_buffers.at(other_device);
+	return copy_async_cpu_device(h2d, wait_events_in, wait_event_out, begin_byte, end_byte, other_device_id, app_buffer_other, device_buffer_other);
+}
 
-    //get device,queue,buffers other device
-    const auto other_device = find_device(other_device_id, _map_device_type_id);
-    auto& [app_buffer_other, device_buffer_other] = _map_device_app_buffers.at(other_device);
-    auto cq_other = _map_device_queue_io.at(other_device);
-    auto ctx_other = _map_device_type_conetxt.at(other_device_id);
-
-    const auto size = end_byte - begin_byte;
-    int err{ 0 };
-
-
-    std::vector<cl::Event> wait_list;
-    //gather wait_events from context
-    for (auto& wait_event_in : wait_events_in) {
-        err = wait_event_in->get_events_in_context(ctx_other, wait_list);
-        if (on_coopcl_error(err) != 0) return err;
-    }
-
-    cl::Event wait_ev_copy;
-    if (h2d)
-    {
-        auto map_ptr_cpu = cq_cpu->enqueueMapBuffer(app_buffer_cpu,true,CL_MAP_READ, begin_byte, size);
-        if (on_coopcl_error(err) != 0)return err;
-
-        err = cq_other->enqueueWriteBuffer(app_buffer_other, false, begin_byte, size, map_ptr_cpu, &wait_list, &wait_ev_copy);
-        if (on_coopcl_error(err) != 0)return err;
-
-        err = cq_cpu->enqueueUnmapMemObject(app_buffer_cpu, map_ptr_cpu);
-        if (on_coopcl_error(err) != 0)return err;
-
-    }
-    else
-    {
-        auto map_ptr_cpu = cq_cpu->enqueueMapBuffer(app_buffer_cpu, true, CL_MAP_WRITE, begin_byte, size);
-        if (on_coopcl_error(err) != 0)return err;
-
-        err = cq_other->enqueueReadBuffer(app_buffer_other, false, begin_byte, size, map_ptr_cpu, &wait_list, &wait_ev_copy);
-        if (on_coopcl_error(err) != 0)return err;
-
-        err = cq_cpu->enqueueUnmapMemObject(app_buffer_cpu, map_ptr_cpu);
-        if (on_coopcl_error(err) != 0)return err;
-    }
-
-
-    err = cq_other->flush();
-    if (on_coopcl_error(err) != 0) return err;
-
-    err = wait_event_out.register_and_create_user_events(wait_ev_copy, _map_device_type_conetxt);
-    if (on_coopcl_error(err) != 0) return err;
-
-
-    return err;
+int clMemory::copy_async_cpu_gpu(const bool h2d, const std::vector<const clAppEvent*>& wait_events_in,
+	clAppEvent& wait_event_out, const size_t begin_byte, const size_t end_byte, const map_device_info& other_device_id, 
+	clMemory& other)
+{
+	//get device,queue,buffers other device
+	const auto other_device = find_device(other_device_id, _map_device_type_id);
+	auto app_buffer_other = other.buffer_application(other_device);
+	auto device_buffer_other = other.buffer_device(other_device);
+	return copy_async_cpu_device(h2d, wait_events_in, wait_event_out, begin_byte, end_byte, other_device_id,*app_buffer_other, *device_buffer_other);
 }
 
 int clMemory::enqueue_async_transfer_device_appliction(
@@ -262,7 +415,7 @@ int clMemory::async_transfer_d2d(
 {
     int err = 0;
 
-    cl::Event wait_ev;
+    
     std::vector<cl::Event> wait_list;
     auto ctx_device = _map_device_type_conetxt.at(destination_device);
     const cl::CommandQueue* cq_device = nullptr;
@@ -282,9 +435,9 @@ int clMemory::async_transfer_d2d(
         err = wait_event_in->get_events_in_context(ctx_device, wait_list);
         if (on_coopcl_error(err) != 0) return err;
     }
-
+	auto wait_ev = std::make_unique<cl::Event>(); 
     //WARNING: blocking call with NVIDIA_driver non_blocking call with AMD_driver
-    err = cq_device->enqueueCopyBuffer(*src_buff_device, *dst_buff_device, begin_byte, begin_byte, size, &wait_list, &wait_ev);
+    err = cq_device->enqueueCopyBuffer(*src_buff_device, *dst_buff_device, begin_byte, begin_byte, size, &wait_list, wait_ev.get());
     if (on_coopcl_error(err) != 0) return err;
 
     err = cq_device->flush();
@@ -345,7 +498,8 @@ const void* clMemory::map_read_data(const bool map_read_device_memory,
     {
         map_ptr = cq->enqueueMapBuffer(buffer_device, true, CL_MAP_READ, offset_read, size_read, nullptr, nullptr, &err);
         if (on_coopcl_error(err) != 0)return  nullptr;
-
+		//std::vector<int> dummy(size_read / sizeof(int));
+		//std::memcpy(dummy.data(), map_ptr, size_read);
         err = cq->enqueueUnmapMemObject(buffer_device, map_ptr);
         if (on_coopcl_error(err) != 0)return  nullptr;
     }
@@ -415,8 +569,8 @@ int clMemory::async_transfer_from_to(
     const cl::CommandQueue* cq_gpu = _map_device_queue_io.at(gpu_device);
     if (cq_gpu == nullptr)return CL_INVALID_COMMAND_QUEUE;
 
-    cl::Event wait_ev;
-    err = enqueue_async_transfer_device_appliction(*cq_gpu, *buff_application, *buff_device, copy_h2d, wait_ev, wait_list, size, begin_byte);
+	auto wait_ev = std::make_unique<cl::Event>();
+    err = enqueue_async_transfer_device_appliction(*cq_gpu, *buff_application, *buff_device, copy_h2d, *wait_ev.get(), wait_list, size, begin_byte);
     if (on_coopcl_error(err) != 0) return err;
 
 
@@ -435,13 +589,13 @@ int clMemory::copy_async(
     const size_t begin_byte,
     const size_t end_byte,
     const map_device_info& source_device,
-    const map_device_info& destination_device)
+    const map_device_info& destination_device,
+	clMemory* ptr_target_memory)
 {
     int err = 0;
 
     // check source and destination devices if:
     // to decide if copy from H2D (CPU-->GPU) or  D2D (GPU-->GPU) or D2H (GPU-->CPU)
-
     // flag CL_DEVICE_TYPE_ALL means each application buffer have valid data, thus copy from CPU
     map_device_info src_device = source_device;
     src_device.first = src_device.first == CL_DEVICE_TYPE_ALL ? CL_DEVICE_TYPE_CPU : src_device.first;
@@ -476,6 +630,9 @@ int clMemory::copy_async(
     cl::Buffer* buff_device{ nullptr };
     if (src_dev_type == CL_DEVICE_TYPE_GPU && dst_dev_type == CL_DEVICE_TYPE_GPU)
     {
+
+#ifdef _d2d_use_direct_copy_
+
         //Here select device_local buffer and device_local buffer
         for (auto& [cldev, dev_type_id] : _map_device_type_id)
         {
@@ -490,95 +647,148 @@ int clMemory::copy_async(
 
         err = async_transfer_d2d(buff_application, buff_device, wait_event_out, wait_events_in,
                                  begin_byte, size, destination_device);
+#else
+		clAppEvent wait_d2h;
+        //D2H+H2D pair
+		bool copy_h2d = false;
+		//D2H-> copy from device_buffer of src_device to application_buffer of destination_device
+        err = copy_async_host_gpu(copy_h2d, wait_events_in, wait_d2h, begin_byte, end_byte, source_device, destination_device);
+		if (on_coopcl_error(err) != 0)return  err;
+        
+		copy_h2d = true;
+		//H2D-> copy from application buffer of destination_device to device_buffer of destination_device
+		err = copy_async_host_gpu(copy_h2d, { &wait_d2h }, wait_event_out, begin_byte, end_byte, destination_device, destination_device);
+		if (on_coopcl_error(err) != 0)return  err;
+#endif
     }
     else
     {
-        bool copy_h2d = true;
-        if (src_dev_type == CL_DEVICE_TYPE_CPU && dst_dev_type == CL_DEVICE_TYPE_GPU)
-        {
-            //Select for GPU, since copy data to GPU: transfer to device_local buffer from application_local buffer
-            for (auto& [cldev, dev_type_id] : _map_device_type_id)
-            {
-                auto& [dev_type, dev_id] = dev_type_id;
-                if (dev_type == dst_device_type && dev_id == dst_device_id) {
-                    buff_application = buffer_application(cldev);
-                    buff_device = buffer_device(cldev);
-                    break;
-                }
+		if (ptr_target_memory)
+		{
+			bool copy_h2d = true;
+			if (src_dev_type == CL_DEVICE_TYPE_CPU && dst_dev_type == CL_DEVICE_TYPE_GPU)
+			{
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, wait_events_in, wait_event_out, begin_byte, end_byte, other_device_id, *ptr_target_memory);
+				if (on_coopcl_error(err) != 0)return  err;
+			}
+			else if (src_dev_type == CL_DEVICE_TYPE_GPU && dst_dev_type == CL_DEVICE_TYPE_CPU)
+			{
+				copy_h2d = false; // now set d2h transfer
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, wait_events_in, wait_event_out, begin_byte, end_byte, other_device_id, *ptr_target_memory);
+			}
+		}
+		else 
+		{
+			bool copy_h2d = true;
+			if (src_dev_type == CL_DEVICE_TYPE_CPU && dst_dev_type == CL_DEVICE_TYPE_GPU)
+			{
+#ifdef _h2d_d2h_v0
 
-            }
+				//Select for GPU, since copy data to GPU: transfer to device_local buffer from application_local buffer
+				for (auto&[cldev, dev_type_id] : _map_device_type_id)
+				{
+					auto&[dev_type, dev_id] = dev_type_id;
+					if (dev_type == dst_device_type && dev_id == dst_device_id) {
+						buff_application = buffer_application(cldev);
+						buff_device = buffer_device(cldev);
+						break;
+					}
 
-            //copy from CPU application buffer to GPU pinned_application memory
-            clAppEvent wait_event_copy_device_app_memory;
-            auto other_device_id = copy_h2d ? destination_device : source_device;
-            err = copy_async_h2h(copy_h2d,wait_events_in, wait_event_copy_device_app_memory, begin_byte, end_byte, other_device_id);
-            if (on_coopcl_error(err) != 0)return  err;
+				}
 
-            //copy from GPU pinned_application memory to GPU device memory
-            err = async_transfer_from_to(copy_h2d, buff_device, buff_application,
-                                         wait_event_out, { &wait_event_copy_device_app_memory },
-                                         begin_byte, size, source_device, destination_device);
+				//copy from CPU application buffer to GPU pinned_application memory
+				clAppEvent wait_event_copy_device_app_memory;
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, wait_events_in, wait_event_copy_device_app_memory, begin_byte, end_byte, other_device_id);
+				if (on_coopcl_error(err) != 0)return  err;
 
-        }
-        else if (src_dev_type == CL_DEVICE_TYPE_GPU && dst_dev_type == CL_DEVICE_TYPE_CPU)
-        {
-            copy_h2d = false; // now set d2h transfer
-            //Select for GPU, since copy data from GPU: transfer from device_local buffer to application_local buffer
-            for (auto& [cldev, dev_type_id] : _map_device_type_id)
-            {
-                auto& [dev_type, dev_id] = dev_type_id;
+				//copy from GPU pinned_application memory to GPU device memory
+				err = async_transfer_from_to(copy_h2d, buff_device, buff_application,
+					wait_event_out, { &wait_event_copy_device_app_memory },
+					begin_byte, size, source_device, destination_device);
+#else
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, wait_events_in, wait_event_out /*wait_event_copy_device_app_memory*/, begin_byte, end_byte, other_device_id);
+				if (on_coopcl_error(err) != 0)return  err;
+#endif
+			}
+			else if (src_dev_type == CL_DEVICE_TYPE_GPU && dst_dev_type == CL_DEVICE_TYPE_CPU)
+			{
+				copy_h2d = false; // now set d2h transfer
+#ifdef _h2d_d2h_v0
 
-                if (dev_type == src_device_type && dev_id == src_device_id) {
-                    buff_device = buffer_device(cldev);
-                    buff_application = buffer_application(cldev);
-                    break;
-                }
-            }
+			//Select for GPU, since copy data from GPU: transfer from device_local buffer to application_local buffer
+				for (auto&[cldev, dev_type_id] : _map_device_type_id)
+				{
+					auto&[dev_type, dev_id] = dev_type_id;
 
-            //copy from GPU device memory to GPU pinned_application memory
-            clAppEvent wait_event_copy_device_app_memory;
-            err = async_transfer_from_to(copy_h2d, buff_device, buff_application,
-                                         wait_event_copy_device_app_memory, wait_events_in,
-                                         begin_byte, size, source_device, destination_device);
-            if (on_coopcl_error(err) != 0)return  err;
+					if (dev_type == src_device_type && dev_id == src_device_id) {
+						buff_device = buffer_device(cldev);
+						buff_application = buffer_application(cldev);
+						break;
+					}
+				}
 
-            //copy from GPU pinned_application memory to CPU application buffer
-            auto other_device_id = copy_h2d ? destination_device : source_device;
-            err = copy_async_h2h(copy_h2d, { &wait_event_copy_device_app_memory }, wait_event_out, begin_byte, end_byte, other_device_id);
-        }
+				//copy from GPU device memory to GPU pinned_application memory
+				clAppEvent wait_event_copy_device_app_memory;
+				err = async_transfer_from_to(copy_h2d, buff_device, buff_application,
+					wait_event_copy_device_app_memory, wait_events_in,
+					begin_byte, size, source_device, destination_device);
+				if (on_coopcl_error(err) != 0)return  err;
+
+				//copy from GPU pinned_application memory to CPU application buffer
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, { &wait_event_copy_device_app_memory }, wait_event_out, begin_byte, end_byte, other_device_id);
+#else
+			//copy from GPU pinned_application memory to CPU application buffer
+				auto other_device_id = copy_h2d ? destination_device : source_device;
+				err = copy_async_cpu_gpu(copy_h2d, wait_events_in/*{ &wait_event_copy_device_app_memory }*/, wait_event_out, begin_byte, end_byte, other_device_id);
+#endif
+
+			}
+		}
     }
     return err;
 }
 
-int clMemory::merge_async(const std::vector<const clAppEvent*>& wait_events_in, clAppEvent& wait_event_out, 
-	const size_t begin_byte, const size_t end_byte, 
-	const map_device_info& source_device, const map_device_info& destination_device)
+
+int clMemory::copy_async(
+	const std::vector<const clAppEvent*>& wait_events_in,
+	clAppEvent& wait_event_out,
+	const size_t begin_byte,
+	const size_t end_byte,
+	const map_device_info& source_device,
+	const map_device_info& destination_device,
+	clMemory& destination)
 {
-    return 0;
+	return copy_async(wait_events_in, wait_event_out, begin_byte, end_byte, source_device, destination_device, &destination);
 }
+
 
 void clMemory::benchmark_memory()
 {
 
-//    check_map_access_latency_from_host_to_device_mem(0, 0);
-//    check_map_access_latency_from_host_to_device_mem(1, 0);
+    //    check_map_access_latency_from_host_to_device_mem(0, 0);
+    //    check_map_access_latency_from_host_to_device_mem(1, 0);
 
-//    /*mem_device_b->check_map_access_latency_from_host_to_device_mem(0, 1);
-//	mem_device_b->check_map_access_latency_from_host_to_device_mem(1, 1);*/
+    //    /*mem_device_b->check_map_access_latency_from_host_to_device_mem(0, 1);
+    //	mem_device_b->check_map_access_latency_from_host_to_device_mem(1, 1);*/
 
-//    bool write_to_pinned = 0;
-//    check_copy_from_to_pinned_mem(write_to_pinned, 0);
+    //    bool write_to_pinned = 0;
+    //    check_copy_from_to_pinned_mem(write_to_pinned, 0);
 
-//    write_to_pinned = 1;
-//    check_copy_from_to_pinned_mem(write_to_pinned, 0);
+    //    write_to_pinned = 1;
+    //    check_copy_from_to_pinned_mem(write_to_pinned, 0);
 
-//    //mem_device_b->check_copy_from_gpu_to_gpu(0, 1);
+    //    //mem_device_b->check_copy_from_gpu_to_gpu(0, 1);
 
-//    bool d2h = true;
-//    check_map_access_latency_from_host_to_pinned_mem(d2h);
+    //    bool d2h = true;
+    //    check_map_access_latency_from_host_to_pinned_mem(d2h);
 
-//    d2h = false;
-//    check_map_access_latency_from_host_to_pinned_mem(d2h);
+    //    d2h = false;
+    //    check_map_access_latency_from_host_to_pinned_mem(d2h);
 
     check_scatter_to_gpus();
 
@@ -620,7 +830,9 @@ int clMemory::check_scatter_to_gpus()
     for (int it = 0; it < itearations; it++)
     {
         std::cout << "Iteration:\t[" << it << "/" << itearations << "]\r" << std::flush;
+
         const auto begin = std::chrono::system_clock::now();
+
         std::vector<std::future<int>> async_calls_h2d;
         for (auto& [dev, cq] : _map_device_queue_io)
         {
@@ -633,12 +845,25 @@ int clMemory::check_scatter_to_gpus()
                 //parallel copy
                 auto async_call = std::async([cq, buf_app, buf_dev, offset, size]
                                              {
-                                                 cl::Event copy_event;
-                                                 auto err = cq->enqueueCopyBuffer(buf_app, buf_dev, offset, offset, size, nullptr, &copy_event);
-                                                 if (on_coopcl_error(err) != 0)return  err;
 
-                                                 err = copy_event.wait();
+                                                 int err = 0;
+                                                 /*
+												 cl::Event copy_event;
+												 err = cq->enqueueCopyBuffer(buf_app, buf_dev, offset, offset, size, nullptr, &copy_event);
                                                  if (on_coopcl_error(err) != 0)return  err;
+												 err = copy_event.wait();
+												 if (on_coopcl_error(err) != 0)return  err;
+                                                 */
+                                                 auto map_ptr_cpu = cq->enqueueMapBuffer(buf_app, true, CL_MAP_READ, offset, size);
+                                                 if (on_coopcl_error(err) != 0)return err;
+
+                                                 err = cq->enqueueWriteBuffer(buf_dev, false, offset, size, map_ptr_cpu, nullptr, nullptr);
+                                                 if (on_coopcl_error(err) != 0)return err;
+
+                                                 err = cq->enqueueUnmapMemObject(buf_app, map_ptr_cpu);
+                                                 if (on_coopcl_error(err) != 0)return err;
+
+
 
                                                  return err;
                                              });

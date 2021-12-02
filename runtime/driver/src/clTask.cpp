@@ -95,8 +95,8 @@ int clTask::async_execute(
         const auto& offsets = ndr_divisions.at(ctx_dev).global_offset_sizes;
         const auto& global_chunk_sizes = ndr_divisions.at(ctx_dev).global_chunk_sizes;
 
-        cl::Event wait_kernel;
-        err = cldevice->enqueue_async_ndrange_block(wait_kernel, wait_list,
+		auto wait_ev = std::make_unique<cl::Event>();
+        err = cldevice->enqueue_async_ndrange_block(*wait_ev, wait_list,
                                                     global_sizes, group_sizes, offsets, global_chunk_sizes, _queue_id, use_cout);
 
         if (err != CL_SUCCESS) return err;
@@ -104,7 +104,7 @@ int clTask::async_execute(
         err = cldevice->flush();
         if (err != CL_SUCCESS) return err;
 
-        err = _event_exec_kernel->register_and_create_user_events(wait_kernel, map_device_context, true);
+        err = _event_exec_kernel->register_and_create_user_events(wait_ev, map_device_context, true);
         if (err != CL_SUCCESS) return err;
 
     }
@@ -129,7 +129,7 @@ int clTask::wait()const
 {
     int err = 0;
 
-    for (auto& ev : _events_to_wait) {
+    for (auto& ev : _events_to_wait_for_memory_copy) {
         err = ev->wait();
         if (err != CL_SUCCESS)
             return err;
@@ -149,22 +149,19 @@ void clTask::wait_clear_events()
     auto err = wait();
     if (err != 0) throw std::runtime_error("Some error on call wait_clear_events, FIXME!!");
 
-    if(_event_exec_kernel)
-        _event_exec_kernel.release();
-
-    _events_to_wait.clear();
+    _events_to_wait_for_memory_copy.clear();
 }
 
 void clTask::add_dependence(const clAppEvent& event_in)
 {
-    _events_to_wait.push_back(&event_in);
+    if(event_in.is_created())
+        _events_to_wait_for_memory_copy.push_back(&event_in);
 }
 
 void clTask::add_dependence(const std::vector<clAppEvent>& events_in)
 {
-    for(auto& ev:events_in)
-        _events_to_wait.push_back(&ev);
-
+    for (auto& ev : events_in)
+        add_dependence(ev);
 }
 
 void clTask::add_dependence(const clTask* other_task)
