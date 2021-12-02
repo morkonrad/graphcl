@@ -5,14 +5,14 @@ What is this ?
 
 It's framework for execution of OpenCL-kernel graphs on multiple-devices. 
 
-In short, the main concept of GraphCL is to enable automatic distribution and mapping of any kernel-graph, no fixed-direct code that maps kernels to devices. Designer uses GraphCL-API to define only the kernel-graph without tedious and complex mapping to the execution platform. The mapping and scheduling of graph-nodes is delegated to the GraphCL-runtime. Runtime distributes and maps tasks automatically, regardless of the number, type and power of processors. 
+In short, the main concept of GraphCL is to enable automatic distribution and mapping of any kernel-graph. GraphCL attempts to avoid fixed-direct code that maps kernels to devices. Designer uses GraphCL-API to define only the kernel-graph without tedious and complex mapping to the execution platform. The mapping and scheduling of graph-nodes is delegated to the GraphCL-runtime. Runtime distributes and maps tasks automatically, regardless of the number, type and power of processors. 
 
 **Main features:**
 
-1. OpenCL-C kernel graph-API that enables to code data-flow graphs of OpenCL-kernels. 
-2. Runtime that implements a) the graph schedule calculation b) based on the calculated schedule, runtime executes in parallel and/or asynchronous the graph-kernels.
-3. Runtime supports parallel+asynchronous tasks/kernels execution, data transfers and synchronization on: multiple-CPU and/or multiple-GPU  
-4. Runtime-driver enables variable partial-workload(Ndrange) execution via splitting and gathering. 
+1. OpenCL-C kernel graph-API that enables to code data-flow graphs of OpenCL-kernels.(imp. inside folder driver)
+2. Task-schedule module that implements: a) the graph schedule calculation b) generates the dispatch commands for GraphCL-runtime.
+3. Driver supports parallel+asynchronous tasks/kernels execution and data transfers. It also enables multi-device synchronization on: multiple-CPU and/or multiple-GPU  
+4. Driver enables variable partial-workload(Ndrange) execution via splitting and gathering. 
 5. Support for Intel/AMD CPUs and Intel/AMD/Nvidia GPUs
 
 What for ? 
