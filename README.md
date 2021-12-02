@@ -54,7 +54,7 @@ In general, it needs a compiler that supports C++17.
 Current state
 ----------------
 
-GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different kernel-graphs on Intel, NVIDIA and AMD platforms. 
+GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different kernel-graphs on Intel, NVIDIA and AMD platforms. For bug-report check readme of separate modules.
 
 **Tested systems:**
 
