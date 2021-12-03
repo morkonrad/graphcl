@@ -135,7 +135,7 @@ def try_insert_sub_kernel_nodes(dag_out: [Node], node: Node, start_end_times: (f
         profile_id = 0
         for profile in copy_profile:
             if profile_id != device_id:
-                copy_profile[profile_id][0] = profiled_duration + (profiled_duration * 2)
+                copy_profile[profile_id][0] = profiled_duration  # + (profiled_duration * 2)
             profile_id += 1
 
         sub_kernel_node = Node(inputs_after_replace, new_outputs,
@@ -308,10 +308,24 @@ def check_schedule_reorder(schedule: {}, map_proc: {int, dag.Device}, dag_nodes:
             for node in dag_nodes:
                 if node.node_id() == schedule_event.task:
                     if node.executor_id() != dispatched_schedule_device_id:
-                        print("Detected re-mapped node ", node.name(), " after schedule")
+                        print("Detected reordered node ", node.name(), " after schedule")
                         duration_task = schedule_event.end - schedule_event.start
                         node.set_node_executor((duration_task, map_proc[dispatched_schedule_device_id]))
     return 0
+
+
+def find_end_node_time(schedule: {}, node_id: int) -> float:
+    """
+    Scan schedule to find end time of a specific node
+    :param schedule:
+    :param node_id:
+    :return: end time of the node specified by the node_id
+    """
+    for processors, processor_nodes in schedule.items():
+        for processor_node in processor_nodes:
+            if processor_node.task == node_id:
+                return processor_node.end
+    return -1
 
 
 def create_dispatch_commands(schedule: {}, map_proc: {int, dag.Device}, dag_nodes: [dag.Node]) -> int:
@@ -320,6 +334,8 @@ def create_dispatch_commands(schedule: {}, map_proc: {int, dag.Device}, dag_node
     print("-----------------------------------")
     print("Dispatch order of GraphCL-commands ")
     print("-----------------------------------\n")
+
+    disaptch_commands_and_start_time = []
     cmd_id = 0
     for current_node in dag_nodes:
         for predecessor in current_node.predecessor_nodes():
@@ -330,24 +346,39 @@ def create_dispatch_commands(schedule: {}, map_proc: {int, dag.Device}, dag_node
                             cmd_txt = "Copy from: " + map_proc[predecessor.executor_id()].name() + " to: " + \
                                       map_proc[current_node.executor_id()].name() + \
                                       " buffer: " + out_buffer.name() + " wait for " + predecessor.name()
-                            print(cmd_txt)
+                            # print(cmd_txt)
+                            # get predecessor end time
+                            end_time = find_end_node_time(schedule, predecessor.node_id())
+                            disaptch_commands_and_start_time.append((end_time, cmd_txt))
                             cmd_id += 1
 
         if len(current_node.predecessor_nodes()) == 0:
             cmd_txt = "Execute " + current_node.name() + " on " + \
                       map_proc[current_node.executor_id()].name() + " no wait for "
-            print(cmd_txt)
+            # print(cmd_txt)
+            end_time = find_end_node_time(schedule, current_node.node_id())
+            disaptch_commands_and_start_time.append((end_time, cmd_txt))
             cmd_id += 1
         else:
             for predecessor in current_node.predecessor_nodes():
                 if predecessor.name() != "":
                     cmd_txt = "Execute " + current_node.name() + " on " + \
                               map_proc[current_node.executor_id()].name() + " wait for " + predecessor.name()
-                    print(cmd_txt)
+                    # print(cmd_txt)
+                    end_time = find_end_node_time(schedule, current_node.node_id())
+                    disaptch_commands_and_start_time.append((end_time, cmd_txt))
                     cmd_id += 1
 
     print("------------------\n")
     print("Dispatched commands:\t", cmd_id)
+    """
+    Sort in respect to the start time of command
+    """
+    disaptch_commands_sorted_by_start_time = sorted(disaptch_commands_and_start_time, key=lambda node: node[0])
+    cmd_id = 1
+    for command in disaptch_commands_sorted_by_start_time:
+        print(cmd_id, ":\t", command[1])
+        cmd_id = cmd_id + 1
     return 0
 
 
