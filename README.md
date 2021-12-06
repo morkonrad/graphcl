@@ -37,35 +37,7 @@ Requirements ?
 4. For unit-tests CTest
 5. Python 3.x with several standard packages such as matplotlib, pandas, numpy ...
 
-How to build ?
----------------
-(example for some Windows platform toolchain)
-  1. git clone GraphCL /dst
-  2. cd /dst
-  3. mkdir build
-  4. cd build
-  5. cmake -G"Visual Studio 15 2017 Win64" .. 
-  6. cmake --build . --config Release
-  
-For Windows, Visual Studio 2017 is a minimal tested version. For Linux it's tested with GCC 9.3 and Clang 9.0. 
-In general, it needs a compiler that supports C++17. 
 
-
-Current state
-----------------
-
-GraphpCL is still work in progress. Nevertheless, the whole-concept was already experimentally tested and works. The driver can successfully execute different kernel-graphs on Intel, NVIDIA and AMD platforms. For bug-report check readme of separate modules.
-
-**Tested systems:**
-
-| HW-Vendor             | CPU       | GPU         | OS                      | Driver version    |
-| -----------           | --------- | ----------- | ----------------------- | -------------------- |
-| Intel+Nvidia CPU+GPU  | i7-4930k  | GTX-780Ti   | Win10-21H1/Ubuntu20.04  | INT-CPU 18.1.0.0920 + NV-GPU 471.11  win_x64, INT-CPU 18.1.0.0920 + NV-GPU 470.57.02 unix_x64  |
-| Intel+AMD 2-CPU+2-GPU | Xeon-6134G| R9-290      | Win10-21H1              | INT-CPU 18.1.0.0920 + AMD-GPU 3075.13 win_x64 |
-|                       |           | WX-7100     |                         |                   |
-| Intel+Nvidia CPU+3-GPU| i9-7980XE | GTX-1080Ti  | Win10-21H1 / Ubuntu20.04| INT-CPU 18.1.0.0920 + NV-GPU 456.71 win_x64, INT-CPU 18.1.0.0920 + NV-GPU 470.57.02 unix_x64   |
-|                       |           | GTX-1080    |                         |                   |
-|                       |           | GTX-TitanX  |                         |                   |
 
 References
 ------------
