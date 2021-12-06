@@ -23,7 +23,7 @@ usage: main.py [-h] [--mkmd_name MKMD_NAME] [--partition_sub_kernel_on]
 In short the main module includes three inputs (see above) to control the application. There are also internal flags that change the behaviour too.
 
 The following image illustrates the results of schedule-module:
-<img src="doc/img/schedule.png" width=80% height=80%>
+<img src="doc/schedule.png" width=80% height=80%>
 
 
 Requirements 
