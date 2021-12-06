@@ -17,6 +17,11 @@ Structure
 
 How to use it and what it gets
 --------------
+usage: main.py [-h] [--mkmd_name MKMD_NAME] [--partition_sub_kernel_on]
+               [--partition_sub_kernel_off]
+
+In short the main module includes three inputs (see above) to control the application. There are also internal flags that change the behaviour too.
+
 The following image illustrates the results of schedule-module:
 <img src="doc/img/schedule.png" width=80% height=80%>
 
