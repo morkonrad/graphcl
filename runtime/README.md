@@ -208,5 +208,3 @@ Currently there is a bug/issue in OpenCL-Nvidia driver (versions above):
 - clEvent callback is unstable. For enqueue NDrange it returns the event status with low-latency (range few miliseconds maximum, dependent on test). Same for clenqueueReadBuffer, but for clenqueueWriteBuffer the implementation generates high-delays, between 10-200 miliseconds!
 - there is big difference between Linux and Windows driver. For example data-transfers between separate GPUs are executed in parallel ( as expected) in Linux but in WIN-OS are serialized!
 
-References
-------------
