@@ -5,16 +5,15 @@ The schedule module calculates the execution schedule for some input OpenCL kern
 
 Structure 
 --------------
-TODO
 
-main.py
-dag.py
-evaluate.py
-heft.py
-mkmd.py
-mkmd_apps.py
-schedule.py
-visualize.py
+main.py -- main module that enables to start the calculation of schedule for the test-applications in mkmd_apps.py
+dag.py -- this module includes GraphCL-API to create the mkmd_apps.py
+evaluate.py -- this module calculates the speeedup of calculated schedule vs. some theoretical speedup and single-device graph schedule.
+heft.py -- this module calculates the HEFT-schedule.
+mkmd.py -- this module includes the profiled execution times for mkmd_apps.py on tested-platforms.  
+mkmd_apps.py -- this module includes several multi-kernel applications.
+schedule.py -- this module creates the node-matrix and edge-matrix for graph with nodes/sub-nodes. It also generates the dispatch-commands for GraphCL-runtime.
+visualize.py -- this module includes functions to draw: a) the task graph with nodes and edges b) Gantt-chart with the calculated schedule
 
 How to use it 
 --------------
