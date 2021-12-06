@@ -1,7 +1,7 @@
 What is this ? 
 --------------
 
-The schedule module calculates the execution schedule for some input OpenCL kernel-graph. There are several test-applications consisting of multiple kerenels (see mkmd_apps.py module). In the kernel-graph each node represents a kernel function. For each kernel-function there are profiled execution times to calculate a node-weights. For the graph-edges and theit weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and generates graphCL-commands.
+The schedule module calculates the execution schedule for some input OpenCL kernel-graph. There are several test-applications consisting of multiple kerenels (see mkmd_apps.py module). In the kernel-graph each node represents a kernel function. For each kernel-function there are profiled execution times to calculate a node-weights. For the graph-edges and theit weights the schedule-module uses profiled bandwidth for platform-specific interconnection-bus between CPUs-GPUs. Once the schedule is calculated the schedule-module analyzes the data-flow between nodes and generates a graphCL-commands.
 
 Structure 
 --------------
@@ -15,9 +15,10 @@ Structure
 - schedule.py -- this module creates the node-matrix and edge-matrix for graph with nodes/sub-nodes. It also generates the dispatch-commands for GraphCL-runtime.
 - visualize.py -- this module includes functions to draw: a) the task graph with nodes and edges b) Gantt-chart with the calculated schedule
 
-How to use it 
+How to use it and what it gets
 --------------
-TODO
+The following image illustrates the results of schedule-module:
+<img src="doc/img/schedule.png" width=80% height=80%>
 
 
 Requirements 
