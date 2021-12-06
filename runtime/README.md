@@ -1,6 +1,6 @@
 TODO
 GraphCL
-[![Build status](https://ci.appveyor.com/api/projects/status/8cg021yesld25ykm?svg=true)](https://ci.appveyor.com/project/morkonrad/graphcl)
+[![Build status](https://ci.appveyor.com/api/projects/status/8cg021yesld25ykm?svg=true)](https://ci.appveyor.com/project/morkonrad/graphcl/runtime)
 
 What is this ? 
 --------------
