@@ -44,7 +44,7 @@ Example:
 ----------------
 The following code executes simple task graph. Tasks B,C are executed asynchronously and in parallel on CPU and GPU:
 ```cpp
-#include "clDriver.h"
+#include "clVirtualDevice.h"
 #include <cassert>
 #include <iostream>
 #include <stdlib.h>
