@@ -44,10 +44,39 @@ Example:
 ----------------
 The following code executes simple task graph. Tasks B,C are executed asynchronously and in parallel on CPU and GPU:
 ```cpp
+
 #include "clVirtualDevice.h"
+#include "clCommon.h"
+#include "utils.h"
 #include <cassert>
-#include <iostream>
-#include <stdlib.h>
+#include <cstdlib>
+
+constexpr auto tasks = R"(
+						
+						__kernel void kA (global int* A)                        
+						{
+							const int tid = get_global_id(0);                                                       
+							A[tid] = 10;
+						}
+						
+						__kernel void kB (const global int* A, global int* B)                        
+						{
+							const int tid = get_global_id(0);                                                       
+							B[tid] = A[tid]+1;
+						}
+						
+						__kernel void kC (const global int* A, global int* C)                        
+						{
+							const int tid = get_global_id(0);                                                       
+							C[tid] = A[tid]+2;
+						}
+						
+						__kernel void kF (const global int* restrict B, const global int* C, global int* D)                        
+						{
+							const int tid = get_global_id(0); 
+							D[tid] = B[tid]+C[tid];
+						}
+						)";
 
 int main()
 {
