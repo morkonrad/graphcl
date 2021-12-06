@@ -4,7 +4,7 @@ GraphCL
 
 What is this ? 
 --------------
-
+It is a driver that enables easily to build kernel graphs. It includes functions that enable asynchronous communication with CPU-GPU OpenCL-runtime implementations.
 
 **Features:**
 1. Task graph API+Runtime
@@ -30,10 +30,7 @@ How to build ?
   6. cmake --build . --config Release
   
 For Windows, Visual Studio 2017 is a minimal tested version. For Linux it's tested with GCC 9.3 and Clang 9.0. 
-In general, it needs a compiler that supports C++17. 
-After succesfull build you can call unit tests to check if they pass:  
- 1. cd /clDriver
- 2. ctest 
+In general, it needs a compiler that supports C++17.  
   
 How to use it ?
 ----------------
