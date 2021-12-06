@@ -52,95 +52,110 @@ The following code executes simple task graph. Tasks B,C are executed asynchrono
 int main()
 {
   //Simple task_graph consist of 4 tasks	
-    /*
-    <BEGIN>
-     [A]
-    /   \
-  [B]   [C]
-    \   /
-     [D]
-    <END>
-    */
-    //A = 10 
-    //B(A) = 11 >> B=A+1
-    //C(A) = 12 >> C=A+2
-    //D(B,C) = 23 >> D=B+C	
+	/*
+	<BEGIN>
+	 [A]
+	/   \
+       [B]  [C]
+	\   /
+	 [D]
+	<END>
+	*/
+	//A = 10 
+	//B(A) = 11 >> B=A+1
+	//C(A) = 12 >> C=A+2
+	//D(B,C) = 23 >> D=B+C	
 
-	constexpr auto tasks = R"(
-  kernel void kA(global int* A)                        
-  {
-  const int tid = get_global_id(0);                                                       
-  A[tid] = 10;
-  }
-
-  kernel void kB(const global int* A,global int* B)                        
-  {
-  const int tid = get_global_id(0);                                                       
-  B[tid] = A[tid]+1;
-  }
-
-  kernel void kC(const global int* A,global int* C)                        
-  {
-  const int tid = get_global_id(0);                                                       
-  C[tid] = A[tid]+2;
-  }
-
-  kernel void kD(const global int* B,
-  const global int* C,global int* D)                        
-  {
-  const int tid = get_global_id(0); 
-  D[tid] = B[tid]+C[tid];
-  }
-  )";
-  
-coopcl::virtual_device device;	
-  
-const size_t items = 1024;  
-auto mA = device.alloc<int>(items);
-auto mB = device.alloc<int>(items);
-auto mC = device.alloc<int>(items);
-auto mD = device.alloc<int>(items);
-
-coopcl::clTask taskA;
-device.build_task(taskA,tasks, "kA");
+	int err = 0;
 	
-coopcl::clTask taskB;
-device.build_task(taskB, tasks, "kB");
-taskB.add_dependence(&taskA);
-
-coopcl::clTask taskC;
-device.build_task(taskC,tasks, "kC");
-taskC.add_dependence(&taskA);
-
-coopcl::clTask taskD;
-device.build_task(taskD, tasks, "kD");
-taskD.add_dependence(&taskB);
-taskD.add_dependence(&taskC);
-
-const std::array<size_t, 3> ndr = { items,1,1 };
-const std::array<size_t, 3> wgs = { 16,1,1 };
+	std::cout << "---------------------------------------------" << std::endl;
+	std::cout << "Start DAG with 4 tasks, 2 parallel tasks  ..." << std::endl;
+	std::cout << " [A] cpu" << std::endl;
+	std::cout << " | |" << std::endl;
+	std::cout << "[B][C] gpu_1 || gpu_2" << std::endl;
+	std::cout << " | | " << std::endl;
+	std::cout << " [D] cpu" << std::endl;
+	std::cout << "<END>" << std::endl;
+	std::cout << "---------------------------------------------" << std::endl;
 	
-for (int i = 0;i < 10;i++) 
-{		
-	device.execute_async(taskA, 0.0f, ndr, wgs, mA); //100% CPU
-	device.execute_async(taskB, 0.8f, ndr, wgs, mA, mB); //80% GPU, 20 % CPU
-	device.execute_async(taskC, 0.5f, ndr, wgs, mA, mC); //50% GPU, 50 % CPU
-	device.execute_async(taskD, 1.0f, ndr, wgs, mB, mC, mD); //100% GPU
-	taskD.wait();
-}
-	
-for (int i = 0;i < items;i++)
-{
-	const auto val = mD->at<int>(i);
-	if (val != 23)
+	auto taskA = device.create_task(tasks, "kA");	
+	auto taskB = device.create_task(tasks, "kB");
+	auto taskC = device.create_task(tasks, "kC");	
+	auto taskD = device.create_task(tasks, "kF");	
+
+	const std::array<size_t, 3> ndr = { items,1,1 };
+	const std::array<size_t, 3> wgs = { 16,1,1 };
+
+	size_t begin_byte = 0;
+	size_t end_byte = items*sizeof(int);
+
+	map_device_info cpu = { CL_DEVICE_TYPE_CPU,0 };
+	map_device_info gpu_a = { CL_DEVICE_TYPE_GPU,0 };
+	map_device_info gpu_b = { CL_DEVICE_TYPE_GPU,1 };
+
+	std::vector<int> zeros(items, 0);
+
+	for (int it = 0; it < iterations; it++)
 	{
-		std::cerr << "Some error at pos i = " << i << std::endl;
-		return -1;
-	}
-}
+		std::cout << "Iteration:\t" << it + 1;
 
-std::cout << "Passed,ok!" << std::endl;
-return 0;
+		//A = 10 
+		//B(A) = 11 >> B=A+1
+		//C(A) = 12 >> C=A+2
+		//D(B,C) = 23 >> D=B+C
+		auto mA = device.alloc(zeros, true, cpu);
+		auto mB = device.alloc(zeros, true, cpu);
+		auto mC = device.alloc(zeros, true, cpu);
+		auto mD = device.alloc(zeros, true, cpu);
+		
+		offload_info exec_a = { { 1.0f,cpu } };
+		offload_info exec_b = { { 1.0f,gpu_a } };
+		offload_info exec_c = { { 1.0f,gpu_b } };
+		offload_info exec_d = { { 1.0f,cpu } };//23
+
+		err = device.execute_async(taskA, exec_a, ndr, wgs, mA);//10
+		on_coopcl_error(err);
+		
+		taskB->add_dependence(taskA.get());		
+		err = device.execute_async(taskB, exec_b, ndr, wgs, mA, mB);//11
+		on_coopcl_error(err);
+
+		taskC->add_dependence(taskA.get());
+		err = device.execute_async(taskC, exec_c, ndr, wgs, mA, mC);//12
+		on_coopcl_error(err);
+
+		taskD->add_dependence(taskB.get());
+		taskD->add_dependence(taskC.get());
+		err = device.execute_async(taskD, exec_d, ndr, wgs, mB, mC, mD);//23
+		on_coopcl_error(err);
+		
+		err = taskD->wait();
+		on_coopcl_error(err);
+
+		auto begin_ptr = mD->data_in_buffer_device<int>(cpu);		
+
+		for (int i = 0;i < items;i++)
+		{
+			const auto val = begin_ptr[i];
+			if (val != 23)
+			{
+				std::vector<int> tmpd(items);
+				std::memcpy(tmpd.data(), begin_ptr, items * sizeof(int));
+
+				std::cerr <<" Some error at pos i = " << i <<"\t{"<< val<<"!="<<23<<"}"<<std::endl;
+				return -1;
+			}
+		}
+		
+		taskA->wait_clear_events();
+		taskB->wait_clear_events();
+		taskC->wait_clear_events();
+		taskD->wait_clear_events();
+
+		std::cout << ":\t DONE" <<std::endl;
+	}
+	std::cout << "Passed,ok!" << std::endl;
+	return 0;
 }
 ```
 
